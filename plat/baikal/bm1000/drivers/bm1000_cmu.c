@@ -14,15 +14,7 @@
 
 struct baikal_clk pclk_list[20];
 
-static uint32_t clkod;
-static uint32_t clkr;
-static uint32_t clkf_hi;
-static uint32_t clkf_lo;
-
 static void          cmu_set_clkf                (struct baikal_clk *pclk, uint64_t prate, uint64_t hz);
-static void          cmu_get_dividers            (struct baikal_clk *pclk);
-static void          cmu_calc_clkf               (uint64_t prate, uint64_t hz);
-static uint64_t      cmu_calc_freq               (uint64_t prate);
 static uint32_t      get_clk_ch_reg              (uint32_t cmu_clkch, uint32_t parent_cmu);
 static int           cmu_clk_ch_calc_div         (uint32_t cmu_clkch, uint32_t parent_cmu, uint64_t hz);
 static int           cmu_clk_ch_set_div          (uint32_t cmu_clkch, uint32_t parent_cmu, uint32_t divider);
@@ -34,49 +26,108 @@ static int           cmu_periph_runtime_set_rate (uint32_t cmuid, uint64_t paren
 static int           cmu_mshc_get_div            (uint32_t parent_cmu);
 static int           cmu_mshc_set_div            (uint32_t parent_cmu, uint32_t selector);
 
-static void cmu_get_dividers(struct baikal_clk *pclk)
-{
-	clkod = ((mmio_read_32(pclk->reg + CMU_PLL_CTL0) & CMU_CLKOD_MASK) >>
-			CMU_CLKOD_SHIFT) + 1;
-	clkr  = ((mmio_read_32(pclk->reg + CMU_PLL_CTL0) & CMU_CLKR_MASK)  >>
-			CMU_CLKR_SHIFT)  + 1;
+#define VCO_MAX	1000000000	// 1GHz - we want to set VCO freq close to that
+#define CLKNR_MAX	2000	// accept ref. divisor up to this (max is 4096)
 
-	clkf_lo = mmio_read_32(pclk->reg + CMU_PLL_CTL1) & CMU_CLKFLO_MASK;
-	clkf_hi = mmio_read_32(pclk->reg + CMU_PLL_CTL2) & CMU_CLKFHI_MASK;
+/*
+ * Calculate best approximation for 'nf' and 'nr' such that
+ * vco = parent * nf / nr; nr <= CLKNR_MAX
+ */
+static void calc_frac(uint64_t prate, uint64_t vco, uint32_t *nf, uint32_t *nr)
+{
+	int mp = 0, np = 1;
+	int mt = 1, nt = vco / prate;
+	uint32_t rp = prate, rt = vco % prate, rn;
+	int f, mn, nn;
+
+	while (rt) {
+		f = rp / rt;
+		rn = rp % rt;
+		mn = mp + f * mt;
+		nn = np + f * nt;
+		if (nn > CLKNR_MAX)
+			break;
+		mp = mt;
+		np = nt;
+		rp = rt;
+		mt = mn;
+		nt = nn;
+		rt = rn;
+	}
+
+	*nf = nt;
+	*nr = mt;
 }
 
-static void cmu_calc_clkf(uint64_t prate, uint64_t hz)
+/*
+ * A simple helper function: find max divisor of 'n'
+ * between low and high. If there are no divisors return high;
+ */
+static inline uint32_t max_div(uint32_t n, uint32_t high, uint32_t low)
 {
-	/* This is a F*CKED UP place. FIXME!!!!1111 */
-	clkf_hi = ((hz * clkod * clkr) << 1) / prate;
-	/* You have to be very careful with the order of operations here */
-	clkf_lo = ((hz * clkod) << 33) / (prate / clkr);
+	uint32_t t = high;
+
+	for (t = high; (t >= low) && (n % t); t++)
+		;
+
+	return (t < low) ? high : t;
 }
 
-static uint64_t cmu_calc_freq(uint64_t prate)
+static int cmu_calc_pll(uint64_t prate, uint64_t hz, uint32_t *pll_od,
+			uint32_t *pll_nf, uint32_t *pll_nr)
 {
-	/* This is sort of a rounding for minimizing the error of calculation */
-	uint64_t lower = ((prate * clkf_lo) & (1ULL << 32))?
-		((prate * clkf_lo >> 33) + 1) : (prate * clkf_lo >> 33);
+	uint32_t od;
 
-	uint64_t upper = prate * clkf_hi >> 1;
-	return (upper + lower) / (clkod * clkr);
+	if (hz > VCO_MAX) {
+		od = 1;
+	} else {
+		od = VCO_MAX / hz;
+		if (od > (1 << 11))
+			od = 1 << 11;
+		od = max_div((uint32_t)prate, od, od / 4 + 1);
+	}
+
+	*pll_od = od;
+	calc_frac(prate, hz * od, pll_nf, pll_nr);
+
+	if ((*pll_nr == 0) || (*pll_nr > (1 << 12)) ||
+	    (*pll_nf == 0) || (*pll_nf > (1 << 18))) {
+		ERROR("Out of range: NR = %u, NF = %u!\n", *pll_nr, *pll_nf);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static void cmu_set_clkf(struct baikal_clk *pclk, uint64_t prate, uint64_t hz)
 {
-	cmu_get_dividers(pclk);
-	cmu_calc_clkf(prate, hz);
+	uint32_t pll_od, pll_nf, pll_nr;
+	uint32_t reg;
 
-	if (clkf_hi & CMU_CLKFHI_MASK) {
-		clkf_hi &= CMU_CLKFHI_MASK;
+	if (pclk->is_cpu) {
+		reg  = mmio_read_32(pclk->reg + CMU_PLL_CTL0);
+		if (reg & (CMU_CLKR_MASK | CMU_CLKOD_MASK)) {
+			WARN("%s: (CPU) unexpected NF/OD: %x\n", __func__, reg);
+			reg &= ~(CMU_CLKR_MASK | CMU_CLKOD_MASK);
+			mmio_write_32(pclk->reg + CMU_PLL_CTL0, reg);
+		}
+		pll_nf = hz / prate;
+		mmio_write_32(pclk->reg + CMU_PLL_CTL1, 0);
+		mmio_write_32(pclk->reg + CMU_PLL_CTL2, pll_nf << 1);
+		pclk->current_freq = prate * pll_nf;
+	} else if (!cmu_calc_pll(prate, hz, &pll_od, &pll_nf, &pll_nr)) {
+		INFO("%s: %x (%u) - NF = %u, NR = %u, OD = %u\n", __func__,
+			pclk->hw_id, (uint32_t)hz, pll_nf, pll_nr, pll_od);
+		reg  = mmio_read_32(pclk->reg + CMU_PLL_CTL0);
+		reg &= ~(CMU_CLKR_MASK | CMU_CLKOD_MASK);
+		reg |= (pll_nr - 1) << CMU_CLKR_SHIFT;
+		reg |= (pll_od - 1) << CMU_CLKOD_SHIFT;
+
+		mmio_write_32(pclk->reg + CMU_PLL_CTL0, reg);
+		mmio_write_32(pclk->reg + CMU_PLL_CTL1, 0);
+		mmio_write_32(pclk->reg + CMU_PLL_CTL2, pll_nf << 1);
+		pclk->current_freq = (prate * pll_nf) / pll_nr / pll_od;
 	}
-
-	mmio_write_32(pclk->reg + CMU_PLL_CTL1, (uint32_t)clkf_lo);
-	mmio_write_32(pclk->reg + CMU_PLL_CTL2, (uint32_t)clkf_hi);
-
-	INFO("%s: %llu Hz (clkod:0x%x clkr:0x%x clkf_hi:0x%x clkf_lo:0x%x)\n",
-		pclk->name, hz, clkod, clkr, clkf_hi, clkf_lo);
 }
 
 static baikal_clk_t *pclk_get(uint32_t cmuid)
@@ -125,8 +176,13 @@ static int cmu_pll_lock_debounce(const struct baikal_clk *const pclk)
 int cmu_pll_is_enabled(uint32_t cmuid)
 {
 	struct baikal_clk *pclk = pclk_get(cmuid);
-	return mmio_read_32(pclk->reg + CMU_PLL_CTL0) & CMU_CTL_EN &&
-	       mmio_read_32(pclk->reg + CMU_PLL_CTL0) & CMU_LOCK;
+	uint32_t reg = mmio_read_32(pclk->reg + CMU_PLL_CTL0);
+
+	if ((reg & (CMU_CTL_EN | CMU_LOCK)) != (CMU_CTL_EN | CMU_LOCK)) {
+		NOTICE("PLL %x not enabled (reg = %x)\n", cmuid, reg);
+		return 0;
+	}
+	return 1;
 }
 
 int cmu_pll_disable(uint32_t cmuid)
@@ -186,6 +242,9 @@ int64_t cmu_pll_get_rate(uint32_t cmuid, uint64_t parent_hz)
 	uint64_t hz;
 	uint64_t prate;
 	struct baikal_clk *pclk = pclk_get(cmuid);
+	uint32_t od, nf, nr;
+	uint32_t reg;
+
 	if (!pclk) {
 		return -ENXIO;
 	}
@@ -196,11 +255,24 @@ int64_t cmu_pll_get_rate(uint32_t cmuid, uint64_t parent_hz)
 		prate = pclk->parent_freq;
 	}
 
-	cmu_get_dividers(pclk);
-	hz = cmu_calc_freq(prate);
+	if (prate != pclk->parent_freq)
+		WARN("%s: CMU-ID %x: prate %u != parent_freq %u\n",
+			__func__, cmuid, (uint32_t)parent_hz, (uint32_t) pclk->parent_freq);
 
-	INFO("%s: %llu Hz (clkod:0x%x clkr:0x%x clkf_hi:0x%x clkf_lo:0x%x)\n",
-		pclk->name, hz, clkod, clkr, clkf_hi, clkf_lo);
+	reg = mmio_read_32(pclk->reg + CMU_PLL_CTL0);
+	od = ((reg & CMU_CLKOD_MASK) >> CMU_CLKOD_SHIFT) + 1;
+	nr = ((reg & CMU_CLKR_MASK) >> CMU_CLKR_SHIFT) + 1;
+	nf = mmio_read_32(pclk->reg + CMU_PLL_CTL2) >> 1;
+
+	hz = (prate * nf) / nr / od;
+	if (hz != pclk->current_freq) {
+		WARN("%s: %s: current_freq (%u) different from actual (%llu)\n",
+			__func__, pclk->name, pclk->current_freq, hz);
+		pclk->current_freq = hz;
+	}
+
+	INFO("%s: %llu Hz (clkod:0x%x clkr:0x%x clkf_hi:0x%x)\n",
+		pclk->name, hz, od, nr, nf);
 
 	return hz;
 }
@@ -220,6 +292,11 @@ static int cmu_periph_runtime_set_rate(uint32_t cmuid, uint64_t parent_hz, uint6
 		prate = pclk->parent_freq;
 	}
 
+	if (prate != pclk->parent_freq)
+		WARN("%s: CMU-ID %x: prate %u != parent_freq %u\n",
+			__func__, cmuid, (uint32_t)parent_hz,
+			(uint32_t) pclk->parent_freq);
+
 	mmio_clrbits_32(pclk->reg + CMU_PLL_CTL6, CMU_SWEN);
 	cmu_set_clkf(pclk, prate, hz);
 	mmio_setbits_32(pclk->reg + CMU_PLL_CTL0, CMU_RST);
@@ -236,6 +313,7 @@ static int cmu_periph_runtime_set_rate(uint32_t cmuid, uint64_t parent_hz, uint6
 int64_t cmu_pll_round_rate(uint32_t cmuid, uint64_t parent_hz, uint64_t hz)
 {
 	uint64_t prate;
+	uint32_t od, nf, nr;
 
 	struct baikal_clk *pclk = pclk_get(cmuid);
 	if (!pclk) {
@@ -256,14 +334,18 @@ int64_t cmu_pll_round_rate(uint32_t cmuid, uint64_t parent_hz, uint64_t hz)
 		prate = pclk->parent_freq;
 	}
 
-	cmu_get_dividers(pclk);
-	cmu_calc_clkf(prate, hz);
-
-	if (clkf_hi & CMU_CLKFHI_MASK) {
-		clkf_hi &= CMU_CLKFHI_MASK;
+	if (prate != pclk->parent_freq)
+		WARN("%s: CMU-ID %x: prate %u != parent_freq %u\n",
+			__func__, cmuid, (uint32_t)parent_hz, (uint32_t) pclk->parent_freq);
+	if (pclk->is_cpu) {
+		od = 1;
+		nr = 1;
+		nf = hz / prate;
+	} else {
+		cmu_calc_pll(prate, hz, &od, &nf, &nr);
 	}
 
-	return cmu_calc_freq(prate);
+	return (prate * nf) / nr / od;
 }
 
 static int cmu_core_runtime_set_rate(uint32_t cmuid, uint64_t parent_hz, uint64_t hz)
@@ -334,7 +416,11 @@ int cmu_pll_set_rate(uint32_t cmuid, uint64_t parent_hz, uint64_t hz)
 		prate = pclk->parent_freq;
 	}
 
-	pclk->current_freq = hz;
+	if (prate != pclk->parent_freq)
+		WARN("%s: CMU-ID %x: prate %u != parent_freq %u\n",
+			__func__, cmuid, (uint32_t)parent_hz,
+			(uint32_t) pclk->parent_freq);
+
 	if (hz == cmu_pll_get_rate(cmuid, parent_hz)) {
 		INFO("%s: %s(): already set to %u Hz\n", pclk->name, __func__,
 			pclk->current_freq);
@@ -452,9 +538,10 @@ int64_t cmu_clk_ch_round_rate(uint32_t cmu_clkch, uint32_t parent_cmu, uint64_t 
 			current_freq / divider);
 		return current_freq / divider;
 	} else {
-		INFO("%s: cmu_pll_round_rate %lld\n", __func__,
-			cmu_pll_round_rate(parent_cmu, hz, pclk->parent_freq));
-		return cmu_pll_round_rate(parent_cmu, pclk->parent_freq, hz);
+		uint64_t rate;
+		rate = cmu_pll_round_rate(parent_cmu, pclk->parent_freq, hz);
+		INFO("%s: cmu_pll_round_rate %lld\n", __func__, rate);
+		return rate;
 	}
 }
 
@@ -554,12 +641,8 @@ int cmu_clk_ch_set_rate(uint32_t cmu_clkch, uint32_t parent_cmu, uint64_t hz)
 /* Might be a useful hack, to set NR to parent frequency / 10^6 */
 int cmu_reconfig_nr(uint32_t cmuid)
 {
-	/* Target VCO reference clock is 250 kHz. */
-	/* May help us avoid fractional clkf in most cases. */
-	uint32_t vco_ref = 250000;
 	uint64_t prate;
 	uint64_t hz;
-	uint32_t reg;
 	int ret;
 	struct baikal_clk *pclk = pclk_get(cmuid);
 	if (!pclk) {
@@ -576,31 +659,8 @@ int cmu_reconfig_nr(uint32_t cmuid)
 		return -EINVAL;
 	}
 
-	/* Maximum allowed CLKR is 4095 */
-	clkr = prate / vco_ref - 1;
-	if (clkr > 4095) {
-		/* This condition would unlikely occur (Fref > 256 MHz). */
-		/* Dirty hack - set VCO reference to 250 kHz. */
-		clkr = prate / 250000 - 1;
-	}
-
-	reg = mmio_read_32(pclk->reg + CMU_PLL_CTL0);
-	reg &= CMU_CLKR_MASK;
-	reg >>= CMU_CLKR_SHIFT;
-	if (reg == clkr) {
-		INFO("%s: %s(): requested clkr (0x%x) is already set\n",
-			pclk->name, __func__, reg + 1);
-		return 0;
-	}
-
 	mmio_clrbits_32(pclk->reg + CMU_PLL_CTL6, CMU_SWEN);
-	mmio_clrbits_32(pclk->reg + CMU_PLL_CTL0, CMU_CLKR_MASK);
 
-	reg  = mmio_read_32(pclk->reg + CMU_PLL_CTL0);
-	reg &= ~(CMU_CLKR_MASK);
-	reg |= clkr << CMU_CLKR_SHIFT;
-
-	mmio_write_32(pclk->reg + CMU_PLL_CTL0, reg);
 	INFO("%s: %s(): %llu Hz\n", pclk->name, __func__, hz);
 	cmu_set_clkf(pclk, prate, hz);
 	mmio_setbits_32(pclk->reg + CMU_PLL_CTL0, CMU_RST);

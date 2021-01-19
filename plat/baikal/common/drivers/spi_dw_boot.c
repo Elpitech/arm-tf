@@ -40,7 +40,11 @@ static int timeout;
 #define GPIO_DATA  *(volatile uint32_t*) ((intptr_t) (GPIO_BASE + 0x00))
 #define GPIO_DIR   *(volatile uint32_t*) ((intptr_t) (GPIO_BASE + 0x04))
 #define CS_BOOT   20
+#ifdef BE_MITX
+#define CS_NORMAL 15
+#else
 #define CS_NORMAL 24
+#endif
 
 static void config_cs (int line)
 {
@@ -166,6 +170,8 @@ static int transfer (int port, int line,
     err = 0;
 
 exit:
+    if (err)
+        ERROR("Transfer error: cmd %x, status %x\n", *(uint8_t *)cmd_, SPI_SR(port));
     clear_cs(CS_NORMAL);
     return err;
 }
@@ -262,20 +268,6 @@ static int status (int port, int line, void *status_)
     return exec (port, line, CMD_FLASH_RDSR, 0, status_, 1);
 }
 
-static int flag_status (int port, int line, void *status_)
-{
-    return exec (port, line, CMD_FLASH_RFSR, 0, status_, 1);
-}
-
-static int get_mode (int port, int line)
-{
-    int flag;
-    if (flag_status(port,line,&flag))
-        return 0;
-
-    return (flag & SPI_FLAG_4BYTE)? ADR_MODE_4BYTE: ADR_MODE_3BYTE;
-}
-
 static int wren (int port, int line)
 {
     int err;
@@ -324,7 +316,7 @@ int  dw_spi_erase   (int port, int line, uint32_t adr, size_t size, size_t secto
     }
 
     if (!adr_mode) {
-        adr_mode = get_mode(port,line);
+        dw_spi_init(port,line);
     }
 
     while (size) {
@@ -357,7 +349,7 @@ int  dw_spi_write   (int port, int line, uint32_t adr, void *data, size_t size)
     char *pdata = data;
 
     if (!adr_mode) {
-        adr_mode = get_mode(port,line);
+        dw_spi_init(port,line);
     }
 
     while (size) {
@@ -402,7 +394,7 @@ int  dw_spi_read    (int port, int line, uint32_t adr, void *data, size_t size)
     char *pdata = data;
 
     if (!adr_mode) {
-        adr_mode = get_mode(port,line);
+        dw_spi_init(port,line);
     }
 
     while (size) {
@@ -484,7 +476,9 @@ const struct flash_info *dw_get_info (int port, int line)
 {
     const struct flash_info *info;
     uint8_t id [SPI_NOR_MAX_ID_LEN];
+    uint32_t size_mb;
 
+    dw_spi_init_regs(port);
     // read
     if (exec (port, line, CMD_FLASH_RDID, 0, id, SPI_NOR_MAX_ID_LEN)){
         ERROR("error while reading JEDEC ID\n");
@@ -496,10 +490,18 @@ const struct flash_info *dw_get_info (int port, int line)
     for (k = 0; k < COUNTOF(spi_nor_ids) - 1; k++){
         info = &spi_nor_ids[k];
         if (!compare(info->id, id, SPI_NOR_MAX_ID_LEN)){
+            size_mb = ((info->sector_size / 1024) * info->n_sectors) / 1024;
             INFO("SPI Flash: sector size %u KiB, sector count %u, total size %u MiB\n",
-		 info->sector_size / 1024, info->n_sectors,
-		 ((info->sector_size / 1024) * info->n_sectors) / 1024);
-
+                 info->sector_size / 1024, info->n_sectors, size_mb);
+            if (!adr_mode) {
+                if (size_mb > 16) {
+                    dw_spi_4byte(port,line);
+                    adr_mode = ADR_MODE_4BYTE;
+                } else {
+                    dw_spi_3byte(port,line);
+                    adr_mode = ADR_MODE_3BYTE;
+                }
+            }
             return info;
         }
     }
@@ -510,17 +512,5 @@ const struct flash_info *dw_get_info (int port, int line)
 
 void dw_spi_init (int port, int line)
 {
-    dw_spi_init_regs(port);
-
-    const struct flash_info *info;
-    info = dw_get_info(port,line);
-    if(!info)
-        return;
-
-    uint64_t total = info->sector_size * info->n_sectors;
-    if (total > 16*1024*1024)
-        dw_spi_4byte(port,line);
-    else
-        dw_spi_3byte(port,line);
-
+    dw_get_info(port,line);
 }

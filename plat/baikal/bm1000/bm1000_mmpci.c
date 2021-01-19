@@ -129,7 +129,14 @@ void mmpci_on(void)
 
 	// TODO: security open LCRU GPR reg
 	mmio_write_32(MMPCI_SREG(0), 0x001F1F1F);
+#ifdef NOT_YET
 	mmio_write_32(MMPCI_SREG(4), 0x01501501);
+#else
+	/* Preserve compatibility with older kernel versions which
+	 * access "MSI_TRANS" registers.
+	 */
+	mmio_write_32(MMPCI_SREG(4), 0x45501501);
+#endif
 }
 
 void mmpci_toNSW(void)

@@ -117,13 +117,14 @@ static int bm1000_validate_ns_entrypoint(uintptr_t entrypoint)
 	 * Check if the non secure entrypoint lies within the non
 	 * secure DRAM.
 	 */
-	if ((entrypoint >= NS_DRAM1_BASE) &&
-	    (entrypoint < (NS_DRAM1_BASE + NS_DRAM1_SIZE)))
-		return PSCI_E_SUCCESS;
-	if ((entrypoint >= NS_DRAM0_BASE) &&
-	    (entrypoint < (NS_DRAM0_BASE + NS_DRAM0_SIZE)))
-		return PSCI_E_SUCCESS;
-	return PSCI_E_INVALID_ADDRESS;
+	if (entrypoint < NS_DRAM0_BASE)
+		return PSCI_E_INVALID_ADDRESS;
+	if ((entrypoint >= SEC_DRAM0_BASE) &&
+	    (entrypoint < (SEC_DRAM0_BASE + SEC_DRAM0_SIZE)))
+		return PSCI_E_INVALID_ADDRESS;
+	if (entrypoint > 0xfffffff0)
+		return PSCI_E_INVALID_ADDRESS;
+	return PSCI_E_SUCCESS;
 }
 
 /*******************************************************************************

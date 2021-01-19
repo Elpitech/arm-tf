@@ -36,6 +36,9 @@ SPI_DRIVER_SOURCES	+=	plat/baikal/common/drivers/spi_dw_boot.c
 else ifeq ($(BE_TARGET),mitx)
 $(eval $(call add_define,BE_MITX))
 SPI_DRIVER_SOURCES	+=	plat/baikal/common/drivers/spi_scp_boot.c
+else ifeq ($(BE_TARGET),mitx_2flash)
+$(eval $(call add_define,BE_MITX))
+SPI_DRIVER_SOURCES	+=	plat/baikal/common/drivers/spi_dw_boot.c
 else ifeq ($(BE_TARGET),qemu)
 $(eval $(call add_define,BE_QEMU))
 SPI_DRIVER_SOURCES	+=	plat/baikal/common/drivers/spi_dw_boot.c
@@ -179,6 +182,9 @@ BL31_SOURCES		+=	drivers/arm/ccn/ccn.c				\
 				$(LIBFDT_SRCS)
 
 ifeq ($(BE_TARGET),mitx)
+BL31_SOURCES		+=	plat/baikal/bm1000/drivers/bm1000_i2c.c
+endif
+ifeq ($(BE_TARGET),mitx_2flash)
 BL31_SOURCES		+=	plat/baikal/bm1000/drivers/bm1000_i2c.c
 endif
 

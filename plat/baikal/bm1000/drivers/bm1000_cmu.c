@@ -351,6 +351,8 @@ int64_t cmu_pll_round_rate(uint32_t cmuid, uint64_t parent_hz, uint64_t hz)
 static int cmu_core_runtime_set_rate(uint32_t cmuid, uint64_t parent_hz, uint64_t hz)
 {
 	struct baikal_clk *pclk = pclk_get(cmuid);
+	uint64_t step_hz;
+
 	if (!pclk) {
 		return -ENXIO;
 	}
@@ -358,6 +360,10 @@ static int cmu_core_runtime_set_rate(uint32_t cmuid, uint64_t parent_hz, uint64_
 	int64_t cur_hz = cmu_pll_get_rate(cmuid, parent_hz);
 	if (cur_hz < 0) {
 		return -ENXIO;
+	}
+	hz = cmu_pll_round_rate(cmuid, parent_hz, hz);
+	if (((int64_t)hz) < 0) {
+		return -EINVAL;
 	}
 
 	/* We only can change frequency in runtime when delta is less than 10% */
@@ -370,14 +376,24 @@ static int cmu_core_runtime_set_rate(uint32_t cmuid, uint64_t parent_hz, uint64_
 		return 0;
 	}
 
-	int abs_delta = delta < 0? -delta : delta;
-	if (abs_delta > cur_hz / 10) {
-		cmu_core_runtime_set_rate(cmuid, parent_hz, delta > 0?
-			(hz - cur_hz / 10) : (hz + cur_hz / 10));
+	while (cur_hz != hz) {
+		if (cur_hz < hz) {
+			if (hz < (cur_hz * 9 / 10))
+				step_hz = cmu_pll_round_rate(cmuid, parent_hz,
+						cur_hz * 9 / 10 + parent_hz - 1);
+			else
+				step_hz = hz;
+		} else {
+			if (hz > (cur_hz * 11 / 10))
+				step_hz = cmu_pll_round_rate(cmuid, parent_hz, cur_hz * 11 / 10);
+			else
+				step_hz = hz;
+		}
+		cmu_set_clkf(pclk, parent_hz, step_hz);
+		WAIT_DELAY((1),	40000 /* 40us*/,);
+		cur_hz = step_hz;
 	}
 
-	cmu_set_clkf(pclk, parent_hz, cur_hz + delta);
-	WAIT_DELAY((1),	40000 /* 40us*/,);
 	return 0;
 }
 

@@ -226,21 +226,6 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 		}
 		mmio_write_32(vdu_base + BAIKAL_VDU_REG_GPIOR, val);
 	}
-
-#ifdef BE_MITX
-	gpio_config_pin(17);
-	gpio_set_pin(17);
-	
-	gpio_config_pin(18);
-	gpio_set_pin(18);
-
-	gpio_config_pin(19);
-	gpio_set_pin(19);
-	int timeout = 1000000;
-	while (timeout--);
-	gpio_clear_pin(19);
-#endif
-
 }
 
 void hdmi_phy_power_on()

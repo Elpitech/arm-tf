@@ -106,7 +106,7 @@ void mmxgbe_on(void)
 			);
 	mmio_write_32(MMXGBE_ASYNCRES_REG, mmxgbe_gpr0);
 
-#ifdef BE_MITX
+#if defined(BE_MITX) && BOARD_VER == 0
 	gpio_config_pin(MMXGBE_HDMI_LCRU_PLL1_RESET_GPIO_PIN);
 	gpio_clear_pin(MMXGBE_HDMI_LCRU_PLL1_RESET_GPIO_PIN);
 	int timeout = 1000000;

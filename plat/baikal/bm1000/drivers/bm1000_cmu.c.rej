@@ -1,0 +1,1206 @@
+--- src/arm-tf-orig/plat/baikal/bm1000/drivers/bm1000_cmu.c	2021-02-26 14:34:43.000000000 +0300
++++ plat/baikal/bm1000/drivers/bm1000_cmu.c	2021-05-23 19:33:42.000000000 +0300
+@@ -61,447 +63,196 @@
+ #define CMU_MSHC_CLKDIV				BIT(16)
+ #define CMU_MSHC_DIV				16
+ 
+-/*
+- * Target VCO reference clock is 250 kHz.
+- * May help us avoid fractional CLKF in most cases.
+- */
+-#define VCO_REF		250000
++#define CLKFHI_MASK				GENMASK(53, 32)
++#define CLKFHI_SET(x)				SETMASK(x, 53, 32)
++#define CLKFHI_SHIFT				32
++#define CLKFLO_MASK				GENMASK(31, 0)
++#define CLKFLO_SET(x)				SETMASK(x, 31, 0)
++#define CLKFLO_SHIFT				0
+ 
+ struct plldivs {
+-	uint32_t clkr;
+-	uint32_t clkfhi;
+-	uint32_t clkflo;
+-	uint32_t clkod;
++	uint32_t nr;
++	uint32_t od;
++	uint32_t nf;
+ };
+ 
+-static void	 cmu_read_plldivs	    (const uintptr_t base, struct plldivs *const plldivs);
+-static void	 cmu_calc_clkf		    (const uint64_t frefclk, const uint64_t fpllreq, struct plldivs *const plldivs);
+-static uint64_t	 cmu_calc_fpll		    (const uint64_t frefclk, const struct plldivs *const plldivs);
+-static void	 cmu_set_clkf		    (const struct cmu_desc *const cmu, const uint64_t frefclk, const uint64_t fpllreq);
+-static int	 cmu_clkch_calc_div	    (const struct cmu_desc *const cmu, const unsigned clkch, uint64_t fclkchreq);
+-static int	 cmu_clkch_get_div	    (const struct cmu_desc *const cmu, const unsigned clkch);
+-static uintptr_t cmu_clkch_get_reg	    (const uintptr_t base, const unsigned clkch);
+-static int	 cmu_clkch_set_div	    (const struct cmu_desc *const cmu, const unsigned clkch, uint32_t div);
+-static struct cmu_desc *const cmu_desc_get_by_base(const uintptr_t base);
+-static int	 cmu_pll_lock_debounce	    (const uintptr_t base);
+-static int	 cmu_runtime_set_core_rate  (const struct cmu_desc *const cmu, const uint64_t frefclk, const uint64_t fpllreq);
+-static int	 cmu_runtime_set_periph_rate(const struct cmu_desc *const cmu, uint64_t frefclk, const uint64_t fpllreq);
+-static int	 cmu_runtime_set_rate	    (const struct cmu_desc *const cmu, const uint64_t frefclk, const uint64_t fpllreq);
+-
+-static struct cmu_desc cmus[20];
+-
+-static void cmu_read_plldivs(const uintptr_t base,
+-			     struct plldivs *const plldivs)
+-{
+-	assert(base);
+-	assert(plldivs);
+-
+-	plldivs->clkod = ((mmio_read_32(base + CMU_PLL_CTL0_REG) &
+-		      CMU_PLL_CTL0_CLKOD_MASK) >> CMU_PLL_CTL0_CLKOD_SHIFT) + 1;
+-
+-	plldivs->clkr  = ((mmio_read_32(base + CMU_PLL_CTL0_REG) &
+-		      CMU_PLL_CTL0_CLKR_MASK) >> CMU_PLL_CTL0_CLKR_SHIFT) + 1;
+-
+-	plldivs->clkflo = mmio_read_32(base + CMU_PLL_CTL1_REG);
+-	plldivs->clkfhi = mmio_read_32(base + CMU_PLL_CTL2_REG) &
+-			  CMU_PLL_CTL2_CLKFHI_MASK;
+-}
+-
+-static void cmu_calc_clkf(const uint64_t frefclk,
+-			  const uint64_t fpllreq,
+-			  struct plldivs *const plldivs)
+-{
+-	assert(plldivs);
+-
+-	/* FIXME: this is a f*cked up place */
+-	plldivs->clkfhi = ((fpllreq * plldivs->clkod * plldivs->clkr) << 1) /
+-			  frefclk;
+-
+-	/* You have to be very careful with the order of operations here */
+-	plldivs->clkflo = ((fpllreq * plldivs->clkod) << 33) /
+-			  (frefclk / plldivs->clkr);
+-}
+-
+-static uint64_t cmu_calc_fpll(const uint64_t frefclk,
+-			      const struct plldivs *const plldivs)
+-{
+-	uint64_t lower, upper;
+-
+-	assert(plldivs);
+-
+-	/* This is sort of a rounding for minimizing the error of calculation */
+-	lower = (frefclk * plldivs->clkflo) & (1ULL << 32) ?
+-		(frefclk * plldivs->clkflo >> 33) + 1 :
+-		(frefclk * plldivs->clkflo >> 33);
+-
+-	upper = frefclk * plldivs->clkfhi >> 1;
+-	return (upper + lower) / (plldivs->clkod * plldivs->clkr);
+-}
+-
+-bool cmu_is_mmca57(const uintptr_t base)
+-{
+-	assert(base);
+-
+-	return base == MMCA57_0_LCRU ||
+-	       base == MMCA57_1_LCRU ||
+-	       base == MMCA57_2_LCRU ||
+-	       base == MMCA57_3_LCRU;
+-}
+-
+-static void cmu_set_clkf(const struct cmu_desc *const cmu,
+-			 const uint64_t frefclk,
+-			 const uint64_t fpllreq)
+-{
+-	struct plldivs plldivs;
+ 
+-	assert(cmu);
+-	assert(cmu->base);
+-
+-	cmu_read_plldivs(cmu->base, &plldivs);
+-	cmu_calc_clkf(frefclk, fpllreq, &plldivs);
+-
+-	INFO("%s <- %llu Hz, clkod:0x%x clkr:0x%x clkfhi:0x%x clkflo:0x%x\n",
+-	     cmu->name, fpllreq,
+-	     plldivs.clkod, plldivs.clkr, plldivs.clkfhi, plldivs.clkflo);
+-
+-	mmio_write_32(cmu->base + CMU_PLL_CTL1_REG, plldivs.clkflo);
+-	mmio_write_32(cmu->base + CMU_PLL_CTL2_REG, plldivs.clkfhi);
+-}
+-
+-static struct cmu_desc *const cmu_desc_get_by_base(const uintptr_t base)
+-{
+-	unsigned idx;
+-
+-	if (!base) {
+-		goto err;
+-	}
+-
+-	for (idx = 0; idx < ARRAY_SIZE(cmus); ++idx) {
+-		struct cmu_desc *const cmu = cmu_desc_get_by_idx(idx);
+-		if (cmu->base == base) {
+-			return cmu;
+-		}
+-	}
+-
+-err:
+-	ERROR("%s: requested CMU (0x%lx) is not found\n", __func__, base);
+-	return NULL;
+-}
+-
+-struct cmu_desc *const cmu_desc_get_by_idx(const unsigned idx)
+-{
+-	if (idx >= ARRAY_SIZE(cmus)) {
+-		return NULL;
+-	}
+-
+-	return &cmus[idx];
+-}
+-
+-static uintptr_t cmu_clkch_get_reg(const uintptr_t base, const unsigned clkch)
+-{
+-	const struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
+-
+-	assert(cmu);
+-	assert(cmu->base);
+-
+-	return cmu->base + CMU_CLKCH0_CTL_REG + clkch * 0x10;
+-}
+-
+-static int cmu_pll_lock_debounce(const uintptr_t base)
+-{
+-	uint64_t debounce, timeout;
++static void cmu_pll_div_get(const uintptr_t base, struct plldivs *const plldivs);
++static int cmu_pll_div_calc(const uint64_t frefclk, const uint64_t fpllreq, struct plldivs *const plldivs);
++static int cmu_pll_div_set(const struct cmu_desc *const cmu, const uint64_t frefclk, const uint64_t fpllreq);
++static int cmu_clkch_div_calc(const struct cmu_desc *const cmu, const unsigned clkch, uint64_t fclkchreq);
++static int cmu_clkch_div_get(const struct cmu_desc *const cmu, const unsigned clkch);
++static uintptr_t cmu_clkch_get_reg(const uintptr_t base, const unsigned clkch);
++static int cmu_clkch_div_set(const struct cmu_desc *const cmu, const unsigned clkch, uint32_t div);
++static struct cmu_desc *const cmu_desc_get_by_base(const uintptr_t base);
++static int cmu_pll_lock_debounce(const uintptr_t base);
++static int cmu_set_core_rate(const struct cmu_desc *const cmu, const uint64_t frefclk, const uint64_t fpllreq);
++static int cmu_set_periph_rate(const struct cmu_desc *const cmu, uint64_t frefclk, const uint64_t fpllreq);
++void mmca57_reconf_sclken(const uintptr_t base, const unsigned div);
++static void cmu_pll_set_od(const uintptr_t base, uint32_t od);
++static void cmu_pll_set_nr(const uintptr_t base, uint32_t nr);
++static void cmu_pll_set_nf(const uintptr_t base, uint32_t nf);
+ 
+-	assert(base);
+ 
+-	for (timeout = timeout_init_us(100000); !timeout_elapsed(timeout);) {
+-		debounce = timeout_init_us(10000);
+-		while (mmio_read_32(base + CMU_PLL_CTL0_REG) &
+-		       CMU_PLL_CTL0_LOCK) {
+-			if (timeout_elapsed(debounce)) {
+-				return 0;
+-			}
+-		}
+-	}
++/*
++// -------------------
++// pll
++// -------------------
++*/
+ 
+-	ERROR("%s(0x%lx): PLL_CTL0.LOCK timeout\n", __func__, base);
+-	return -ETIMEDOUT;
+-}
+ 
+ int cmu_pll_is_enabled(const uintptr_t base)
+ {
+-	assert(base);
+-
+-	return (mmio_read_32(base + CMU_PLL_CTL0_REG) & CMU_PLL_CTL0_CTL_EN) &&
++	int ret;
++	ret = (mmio_read_32(base + CMU_PLL_CTL0_REG) & CMU_PLL_CTL0_CTL_EN) &&
+ 	       (mmio_read_32(base + CMU_PLL_CTL6_REG) & CMU_PLL_CTL6_SWEN);
+-}
+-
+-int cmu_pll_disable(const uintptr_t base)
+-{
+-	const struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
+-
+-	if (!cmu) {
+-		return -ENXIO;
+-	}
+-
+-	mmio_clrbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_CTL_EN);
+-	return 0;
++	INFO("%s: base=0x%lx, is_%s\n", __func__,
++		base, ret? "enabled":"disabled");
++	return ret;
+ }
+ 
+ int cmu_pll_enable(const uintptr_t base)
+ {
+-	const struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
+ 	int err;
+-	int64_t fpll;
+-
+-	if (!cmu) {
+-		return -ENXIO;
+-	}
+-
+ 	if (cmu_pll_is_enabled(base)) {
+-		WARN("%s: %s(): PLL already enabled\n", cmu->name, __func__);
++		INFO("%s: base=0x%lx, already\n", __func__, base);
+ 		return 0;
+ 	}
++	/* config */
++	mmio_clrbits_32(base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
++	mmio_setbits_32(base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_CTL_EN);
++	mmio_clrbits_32(base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_BYPASS);
+ 
+-	fpll = cmu_pll_get_rate(base, cmu->frefclk);
+-	if (fpll < 0) {
+-		return fpll;
+-	}
+-
+-	if (fpll < cmu->fpllmin || fpll > cmu->fpllmax) {
+-		ERROR("%s: %s(): currently set frequency is out off limits [%u..%u] Hz\n" \
+-		      "Enabling rejected. Please set the rate.\n", cmu->name,
+-		      __func__, cmu->fpllmin, cmu->fpllmax);
+-		return -EINVAL;
+-	}
+-
+-	INFO("%s: %s() on %lld Hz\n", cmu->name, __func__, fpll);
+-
+-	mmio_setbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_CTL_EN);
+-	mmio_clrbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_BYPASS);
+-	mmio_setbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_RST);
++	/* change */
+ 
++	/* wait */
++	mmio_setbits_32(base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_RST);
+ 	err = cmu_pll_lock_debounce(base);
+ 	if (err) {
++		ERROR("%s: base=0x%lx, timeout\n", __func__, base);
+ 		return err;
+ 	}
+ 
+-	mmio_setbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
+-	mmio_clrbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWRST);
++	/* enable */
++	mmio_setbits_32(base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
++	mmio_clrbits_32(base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWRST);
++
++	INFO("%s: base=0x%lx, enable\n", __func__, base);
+ 	return 0;
+ }
+ 
+-void cmu_pll_on(const uintptr_t base, const cmu_pll_ctl_vals_t *const pllinit)
++int cmu_pll_disable(const uintptr_t base)
+ {
+-	uint32_t ctl0, ctl6;
+-	int err;
+-
+-	if (cmu_pll_is_enabled(base)) {
+-		WARN("PLL 0x%lx is already enabled, skipped\n", base);
+-		return;
+-	}
+-
+-	ctl6 = mmio_read_32(base + CMU_PLL_CTL6_REG);
+-	ctl6 &= ~CMU_PLL_CTL6_SWEN;
+-	mmio_write_32(base + CMU_PLL_CTL6_REG, ctl6);
+-
+-	ctl0 = mmio_read_32(base + CMU_PLL_CTL0_REG);
+-	ctl0 |= CMU_PLL_CTL0_CTL_EN;
+-	mmio_write_32(base + CMU_PLL_CTL0_REG, ctl0);
+-	ctl0 &= ~CMU_PLL_CTL0_BYPASS;
+-	mmio_write_32(base + CMU_PLL_CTL0_REG, ctl0);
+-	ctl0 &= ~CMU_PLL_CTL0_CLKOD_MASK;
+-	ctl0 |= CMU_PLL_CTL0_CLKOD_SET(pllinit->clkod);
+-	ctl0 &= ~CMU_PLL_CTL0_CLKR_MASK;
+-	ctl0 |= CMU_PLL_CTL0_CLKR_SET(pllinit->clkr);
+-	mmio_write_32(base + CMU_PLL_CTL0_REG, ctl0);
+-
+-	mmio_write_32(base + CMU_PLL_CTL1_REG, pllinit->clkflo);
+-	mmio_write_32(base + CMU_PLL_CTL2_REG, pllinit->clkfhi);
+-
+-	mmio_clrsetbits_32(base + CMU_PLL_CTL4_REG,
+-			   CMU_PLL_CTL4_IIGAIN_LGMLT_MASK |
+-			   CMU_PLL_CTL4_IPGAIN_LGMLT_MASK |
+-			   CMU_PLL_CTL4_IGAIN_LGMLT_MASK  |
+-			   CMU_PLL_CTL4_PGAIN_LGMLT_MASK,
+-			   CMU_PLL_CTL4_IIGAIN_LGMLT_SET(pllinit->iigain) |
+-			   CMU_PLL_CTL4_IPGAIN_LGMLT_SET(pllinit->ipgain) |
+-			   CMU_PLL_CTL4_IGAIN_LGMLT_SET(pllinit->igain)	  |
+-			   CMU_PLL_CTL4_PGAIN_LGMLT_SET(pllinit->pgain));
+-
+-	ctl0 |= CMU_PLL_CTL0_RST;
+-	mmio_write_32(base + CMU_PLL_CTL0_REG, ctl0);
+-
+-	err = cmu_pll_lock_debounce(base);
+-	if (err) {
+-		return;
+-	}
+-
+-	ctl6 |= CMU_PLL_CTL6_SWEN;
+-	mmio_write_32(base + CMU_PLL_CTL6_REG, ctl6);
+-	ctl6 &= ~CMU_PLL_CTL6_SWRST;
+-	mmio_write_32(base + CMU_PLL_CTL6_REG, ctl6);
++	mmio_clrbits_32(base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_CTL_EN);
++	INFO("%s: base=0x%lx, disable\n", __func__, base);
++	return 0;
+ }
+ 
+ int64_t cmu_pll_get_rate(const uintptr_t base, uint64_t frefclk)
+ {
+ 	uint64_t fpll;
+-	const struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
+ 	struct plldivs plldivs;
+ 
+-	if (!cmu) {
+-		return -ENXIO;
+-	}
+-
+ 	if (!frefclk) {
++		struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
++		if (!cmu) {
++			return -1;
++		}
+ 		frefclk = cmu->frefclk;
+ 	}
+ 
+-	cmu_read_plldivs(base, &plldivs);
+-	fpll = cmu_calc_fpll(frefclk, &plldivs);
+-
+-	INFO("%s -> %llu Hz, clkod:0x%x clkr:0x%x clkfhi:0x%x clkflo:0x%x\n",
+-	     cmu->name, fpll,
+-	     plldivs.clkod, plldivs.clkr, plldivs.clkfhi, plldivs.clkflo);
++	cmu_pll_div_get(base, &plldivs);
++	fpll = (frefclk * plldivs.nf) / (plldivs.nr * plldivs.od);
+ 
++	INFO("%s: base=0x%lx, rate=%llu\n", __func__, base, fpll);
+ 	return fpll;
+ }
+ 
+-static int cmu_runtime_set_periph_rate(const struct cmu_desc *const cmu,
+-				       uint64_t frefclk,
+-				       const uint64_t fpllreq)
+-{
+-	int err;
+-
+-	assert(cmu);
+-	assert(cmu->base);
+-
+-	if (!frefclk) {
+-		frefclk = cmu->frefclk;
+-	}
+-
+-	mmio_clrbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
+-	cmu_set_clkf(cmu, frefclk, fpllreq);
+-	mmio_setbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_RST);
+-
+-	err = cmu_pll_lock_debounce(cmu->base);
+-	if (err) {
+-		return err;
+-	}
+-
+-	mmio_setbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
+-	return 0;
+-}
+-
+ int64_t cmu_pll_round_rate(const uintptr_t base,
+ 			   uint64_t frefclk,
+ 			   const uint64_t fpllreq)
+ {
+-	const struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
++	int ret;
+ 	struct plldivs plldivs;
+ 	uint64_t fpll;
+ 
+-	if (!cmu) {
+-		return -ENXIO;
+-	}
+-
+-	if (fpllreq <= cmu->fpllmin) {
+-		return cmu->fpllmin;
+-	}
+-
+-	if (fpllreq >= cmu->fpllmax) {
+-		return cmu->fpllmax;
+-	}
+-
+ 	if (!frefclk) {
++		struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
++		if (!cmu) {
++			return -1;
++		}
+ 		frefclk = cmu->frefclk;
+ 	}
+ 
+-	cmu_read_plldivs(base, &plldivs);
+-	cmu_calc_clkf(frefclk, fpllreq, &plldivs);
+-	fpll = cmu_calc_fpll(frefclk, &plldivs);
+-
+-	if (fpll % VCO_REF <= VCO_REF / 2) {
+-		return (fpll / VCO_REF) * VCO_REF;
+-	} else {
+-		return (fpll / VCO_REF) * VCO_REF + VCO_REF;
+-	}
+-}
+-
+-static int cmu_runtime_set_core_rate(const struct cmu_desc *const cmu,
+-				     const uint64_t frefclk,
+-				     const uint64_t fpllreq)
+-{
+-	int delta;
+-	int64_t fpll;
+-
+-	assert(cmu);
+-	assert(cmu->base);
+-
+-	fpll = cmu_pll_get_rate(cmu->base, frefclk);
+-	if (fpll < 0) {
+-		return -ENXIO;
++	ret = cmu_pll_div_calc(frefclk, fpllreq, &plldivs);
++	if (ret) {
++		return ret;
+ 	}
+ 
+-	delta = fpllreq - fpll;
+-	if (!delta) {
+-		return 0;
+-	}
++	fpll = (frefclk * plldivs.nf) / (plldivs.nr * plldivs.od);
+ 
+-	cmu_set_clkf(cmu, frefclk, fpllreq);
+-	cmu_pll_lock_debounce(cmu->base);
+-	return 0;
+-}
+-
+-static int cmu_runtime_set_rate(const struct cmu_desc *const cmu,
+-				const uint64_t frefclk,
+-				const uint64_t fpllreq)
+-{
+-	assert(cmu);
+-	assert(cmu->base);
+-
+-	INFO("%s: %s(): %llu\n", cmu->name, __func__, fpllreq);
+-	if (cmu_is_mmca57(cmu->base)) {
+-		return cmu_runtime_set_core_rate(cmu, frefclk, fpllreq);
+-	} else {
+-		return cmu_runtime_set_periph_rate(cmu, frefclk, fpllreq);
+-	}
++	INFO("%s: base=0x%lx, rate=%llu\n", __func__, base, fpll);
++	return fpll;
+ }
+ 
+ int cmu_pll_set_rate(const uintptr_t base,
+ 		     uint64_t frefclk,
+ 		     const uint64_t fpllreq)
+ {
++	int ret;
+ 	struct cmu_desc *const cmu = cmu_desc_get_by_base(base);
+ 
+-	if (!cmu) {
++	if (base == MMAVLSP_LCRU) {
++		INFO("%s: base=0x%lx, skip\n", __func__, base);
+ 		return -ENXIO;
+ 	}
+ 
+-	if (fpllreq < cmu->fpllmin || fpllreq > cmu->fpllmax) {
+-		ERROR("%s: %s(): requested frequency is out of limits [%u..%u] Hz\n",
+-		      cmu->name, __func__, cmu->fpllmin, cmu->fpllmax);
+-		return -EINVAL;
++	/* prepare */
++	if (!cmu) {
++		return -ENXIO;
+ 	}
+-
+ 	if (!frefclk) {
+ 		frefclk = cmu->frefclk;
+ 	}
+-
+-	cmu->fpllreq = fpllreq;
+ 	if (fpllreq == cmu_pll_get_rate(base, frefclk)) {
+-		INFO("%s: %s(): already set to %u Hz\n", cmu->name, __func__,
+-		     cmu->fpllreq);
++		INFO("%s: base=0x%lx, rate=%llu, already\n",
++			__func__, base, fpllreq);
+ 		return 0;
+ 	}
+ 
+-	if (cmu_pll_is_enabled(base)) {
+-		return cmu_runtime_set_rate(cmu, frefclk, fpllreq);
++	/* change */
++	if (cmu_is_mmca57(base)) {
++		ret = cmu_set_core_rate(cmu, frefclk, fpllreq);
+ 	} else {
+-		INFO("%s: PLL is not enabled, set it to %llu Hz\n", cmu->name,
+-		     fpllreq);
+-		cmu_set_clkf(cmu, frefclk, fpllreq);
+-		return 0;
++		ret = cmu_set_periph_rate(cmu, frefclk, fpllreq);
+ 	}
++	INFO("%s: base=0x%lx, name=%s, rate=%llu%s\n",
++		__func__, base, cmu->name, fpllreq, ret? ", fail" : "");
++	return ret;
++}
++
++
++
++
++/*
++// -------------------
++// channel
++// -------------------
++*/
++int cmu_clkch_is_enabled(const uintptr_t base, const unsigned clkch)
++{
++	int ret;
++	uintptr_t clkch_reg = cmu_clkch_get_reg(base, clkch);
++	if (!clkch_reg) {
++		return -ENXIO;
++	}
++
++	ret = (mmio_read_32(clkch_reg) & CMU_CLKCH_CTL_CLK_EN) &&
++	       cmu_pll_is_enabled(base);
++
++	INFO("%s: base=0x%lx, ch=%d, is_%s\n",
++		__func__, base, clkch, ret? "enabled" : "disabled");
++	return ret;
+ }
+ 
+ int cmu_clkch_enable(const uintptr_t base, const unsigned clkch)
+@@ -633,142 +281,577 @@ int cmu_clkch_set_rate(const uintptr_t b
+ 			return -EINVAL;
+ 		}
+ 
+-		div = cmu_clkch_calc_div(cmu, clkch, fclkchreq);
+-		INFO("%s: divider 0x%x\n", __func__, div);
++		div = cmu_clkch_div_calc(cmu, clkch, fclkchreq);
+ 
+ 		if (cmu_clkch_is_enabled(base, clkch)) {
+ 			cmu_clkch_disable(base, clkch);
+-
+-			if (cmu_clkch_set_div(cmu, clkch, div)) {
++			if (cmu_clkch_div_set(cmu, clkch, div)) {
+ 				return -ETIMEDOUT;
+ 			}
+-
+ 			if (cmu_clkch_enable(base, clkch)) {
+ 				return -ETIMEDOUT;
+ 			}
+-		} else if (cmu_clkch_set_div(cmu, clkch, div)) {
++		} else if (cmu_clkch_div_set(cmu, clkch, div)) {
+ 			return -ETIMEDOUT;
+ 		}
++
+ 	} else {
+-		return cmu_pll_set_rate(base, cmu->frefclk, fclkchreq);
++		ret = cmu_pll_set_rate(base, cmu->frefclk, fclkchreq);
+ 	}
+ 
+-	return 0;
++	INFO("%s: base=0x%lx, ch=%u, rate=%llu\n", __func__, base, clkch, fclkchreq);
++	return ret;
+ }
+ 
+-void cmu_pll_reconf_nr(const struct cmu_desc *const cmu)
++
++
++/*
++// -------------------
++// divs
++// -------------------
++*/
++static void cmu_pll_div_get(const uintptr_t base, struct plldivs *const plldivs)
+ {
+-	uint32_t clkr;
+-	int err;
+-	uint32_t reg;
++	uint64_t clkflo;
++	uint64_t clkfhi;
++
++	plldivs->od = ((mmio_read_32(base + CMU_PLL_CTL0_REG) &
++		      CMU_PLL_CTL0_CLKOD_MASK) >> CMU_PLL_CTL0_CLKOD_SHIFT) + 1;
+ 
+-	assert(cmu);
+-	assert(cmu->base);
++	plldivs->nr = ((mmio_read_32(base + CMU_PLL_CTL0_REG) &
++		      CMU_PLL_CTL0_CLKR_MASK) >> CMU_PLL_CTL0_CLKR_SHIFT) + 1;
+ 
+-	if (cmu->fpllreq < cmu->fpllmin || cmu->fpllreq > cmu->fpllmax) {
+-		ERROR("%s: %s(): requested frequency is out off limits [%u..%u] Hz\n" \
+-		      "Configuration rejected.\n", cmu->name, __func__,
+-		      cmu->fpllmin, cmu->fpllmax);
+-		return;
++	clkflo = mmio_read_32(base + CMU_PLL_CTL1_REG) & CMU_PLL_CTL1_CLKFLO_MASK;
++	clkfhi = mmio_read_32(base + CMU_PLL_CTL2_REG) & CMU_PLL_CTL2_CLKFHI_MASK;
++	plldivs->nf = ((clkfhi << CLKFHI_SHIFT) + (clkflo << CLKFLO_SHIFT)) / 0x200000000;
++
++	INFO("%s: base=0x%lx, nr=%d, od=%d, nf=%d\n",
++		__func__, base, plldivs->nr, plldivs->od, plldivs->nf);
++}
++
++static int cmu_pll_div_calc(const uint64_t frefclk,
++			     const uint64_t fpllreq,
++			     struct plldivs *const plldivs)
++{
++	if (!frefclk || !fpllreq || !plldivs) {
++		return -ENXIO;;
+ 	}
+ 
+-	/* Maximum allowed CLKR is 4095 */
+-	clkr = cmu->frefclk / VCO_REF - 1;
+-	if (clkr > 4095) {
+-		/* This condition would unlikely occur (Fref > 256 MHz) */
+-		clkr = cmu->frefclk / VCO_REF - 1;
++	uint64_t fout = 0;
++	uint64_t fvco = 0;
++	const uint64_t fvco_max = 2200000000; /* 2.2 GHz */
++	/* const uint64_t fout_max = 1500000000; */ /* 1.5 GHz */
++	const uint64_t fout_max = 2200000000; /* 2.2 GHz */
++	uint32_t od_max = fvco_max / fpllreq;
++	uint32_t od, od2 = -1;
++	uint32_t nr, nr2 = -1;
++	uint32_t nf, nf2 = -1;
++	int32_t err;
++	uint32_t err2 = -1;
++	bool done = false;
++
++	/*
++	INFO("%s: od_max=%d\n", __func__, od_max);
++	INFO("%s: Freq=%lld\n", __func__, fpllreq);
++	*/
++
++	for (nr = 1; nr < 200; nr++) {
++		for (od = 1; od <= od_max; od++) {
++
++			nf = (fpllreq * nr * od) / frefclk;
++			fout = (frefclk * nf) / (nr * od);
++			fvco = (frefclk * nf) / nr;
++			err = (1000 * fout) / fpllreq - 1000;
++			if (err < 0) {
++				err = -err;
++			}
++			if (fvco > fvco_max || fout > fout_max) {
++				continue;
++			}
++
++			/* INFO("%s: NR=%d, OD=%d, NF=%d, Err=%d\n", __func__, nr, od, nf, err); */
++
++			if (err < err2) {
++				done = true;
++				nr2 = nr;
++				od2 = od;
++				nf2 = nf;
++				err2 = err;
++			}
++			if (err == 0) {
++				done = true;
++				goto exit;
++			}
++		}
+ 	}
+ 
+-	reg = mmio_read_32(cmu->base + CMU_PLL_CTL0_REG);
+-	reg &= CMU_PLL_CTL0_CLKR_MASK;
+-	reg >>= CMU_PLL_CTL0_CLKR_SHIFT;
+-	if (reg == clkr) {
+-		INFO("%s: %s(): requested clkr (0x%x) is already set\n",
+-		     cmu->name, __func__, reg + 1);
+-		return;
++exit:
++
++	if (done) {
++		plldivs->nr = nr2;
++		plldivs->od = od2;
++		plldivs->nf = nf2;
++		INFO("%s: nr=%d, od=%d, nf=%d, err=%d, rate=%lld\n",
++			__func__, nr2, od2, nf2, err2, fout);
++		return 0;
++	} else {
++		return -1;
+ 	}
++}
+ 
+-	mmio_clrbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
+-	mmio_clrbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_CLKR_MASK);
+-	mmio_clrsetbits_32(cmu->base + CMU_PLL_CTL0_REG,
+-			   CMU_PLL_CTL0_CLKR_MASK,
+-			   clkr << CMU_PLL_CTL0_CLKR_SHIFT);
++static int cmu_pll_div_set(const struct cmu_desc *const cmu,
++			 uint64_t frefclk,
++			 const uint64_t fpllreq)
++{
++	int ret;
++	struct plldivs current;
++	struct plldivs calc;
+ 
+-	INFO("%s: %s(): %u Hz\n", cmu->name, __func__, cmu->fpllreq);
+-	cmu_set_clkf(cmu, cmu->frefclk, cmu->fpllreq);
+-	mmio_setbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_RST);
++	/* prepare */
++	if (!cmu) {
++		return -ENXIO;
++	}
++	if (!frefclk) {
++		frefclk = cmu->frefclk;
++	}
++	cmu_pll_div_get(cmu->base, &current);
++	ret = cmu_pll_div_calc(frefclk, fpllreq, &calc);
++	if (ret) {
++		return ret;
++	}
+ 
+-	err = cmu_pll_lock_debounce(cmu->base);
+-	if (err) {
+-		return;
++	/* change */
++	/* total drop */
++	if (calc.nf < current.nf) {
++		cmu_pll_set_nf(cmu->base, calc.nf);
++	}
++	if (calc.od > current.od) {
++		cmu_pll_set_od(cmu->base, calc.od);
++	}
++	if (calc.nr > current.nr) {
++		cmu_pll_set_nr(cmu->base, calc.nr);
+ 	}
+ 
+-	mmio_setbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
++	/* up */
++	if (calc.nf > current.nf) {
++		cmu_pll_set_nf(cmu->base, calc.nf);
++	}
++	if (calc.od < current.od) {
++		cmu_pll_set_od(cmu->base, calc.od);
++	}
++	if (calc.nr < current.nr) {
++		cmu_pll_set_nr(cmu->base, calc.nr);
++	}
++
++	return 0;
+ }
+ 
+-static int cmu_clkch_calc_div(const struct cmu_desc *const cmu,
++static int cmu_clkch_div_get(const struct cmu_desc *const cmu,
++			     const unsigned clkch)
++{
++	uintptr_t clkch_reg;
++	uint32_t div;
++	uint32_t reg;
++	int64_t fpll;
++
++	clkch_reg = cmu_clkch_get_reg(cmu->base, clkch);
++	if (!clkch_reg) {
++		return -ENXIO;
++	}
++
++	/* div */
++	reg = mmio_read_32(clkch_reg);
++	div = (reg & CMU_CLKCH_CTL_VAL_CLKDIV_MASK) >> CMU_CLKCH_CTL_VAL_CLKDIV_SHIFT;
++	if (!div) {
++		return -ENXIO;
++	}
++	if (clkch == cmu->mshc_clkch
++		&& !(mmio_read_32(cmu->base + CMU_GPR_AVLSP_MSHC_CFG) & CMU_MSHC_CLKDIV)) {
++		div *= CMU_MSHC_DIV;
++	}
++
++	/* pll */
++	fpll = cmu_pll_get_rate(cmu->base, cmu->frefclk);
++	if (!fpll) {
++		return -ENXIO;
++	}
++
++	INFO("%s: base=0x%lx, ch=%d, rate=%llu, div=%d\n",
++		__func__, cmu->base, clkch, fpll/div, div);
++
++	return div;
++}
++
++static int cmu_clkch_div_calc(const struct cmu_desc *const cmu,
+ 			      const unsigned clkch,
+ 			      uint64_t fclkchreq)
+ {
+ 	int div;
+ 	int64_t fpll;
+-	int max = CMU_CLKCH_CTL_VAL_CLKDIV_MAX;
+-
+-	assert(cmu);
+-	assert(cmu->base);
++	int max;
+ 
+-	if (clkch == cmu->mshc_clkch) {
+-		max *= CMU_MSHC_DIV;
++	if (!fclkchreq) {
++		return -ENXIO;
+ 	}
+ 
++	/* calc */
+ 	fpll = cmu_pll_get_rate(cmu->base, cmu->frefclk);
+ 	if (fpll < 0) {
+ 		return fpll;
+ 	}
+-
+-	/* raw */
+ 	div = fpll / fclkchreq;
++
++	/* bound */
++	max = CMU_CLKCH_CTL_VAL_CLKDIV_MAX;
++	if (clkch == cmu->mshc_clkch) {
++		max *= CMU_MSHC_DIV;
++	}
+ 	if (div < 1) {
+ 		div = 1;
+ 	}
++	if (div > max) {
++		div = max;
++	}
+ 
++	/* round */
+ 	if (clkch == cmu->mshc_clkch && div > CMU_CLKCH_CTL_VAL_CLKDIV_MAX) {
+-		/* Round MSHC clock channel divider */
+ 		div /= CMU_MSHC_DIV;
+ 		div *= CMU_MSHC_DIV;
+ 	}
+ 
+-	if (div > max) {
+-		div = max;
+-	}
++	INFO("%s: base=0x%lx, ch=%d, rate=%llu, div=%d\n",
++		__func__, cmu->base, clkch, fclkchreq, div);
+ 
+ 	return div;
+ }
+ 
+-static int cmu_clkch_get_div(const struct cmu_desc *const cmu,
+-			     const unsigned clkch)
++static int cmu_clkch_div_set(const struct cmu_desc *const cmu,
++			     const unsigned clkch,
++			     uint32_t div)
+ {
+ 	uintptr_t clkch_reg;
+-	uint32_t div;
++	uint64_t timeout;
+ 	uint32_t reg;
+ 
+-	assert(cmu);
+-	assert(cmu->base);
+-
++	/* prepare */
++	if (div > CMU_CLKCH_CTL_VAL_CLKDIV_MAX * CMU_MSHC_DIV) {
++		return -EINVAL;
++	}
+ 	clkch_reg = cmu_clkch_get_reg(cmu->base, clkch);
+ 	if (!clkch_reg) {
+ 		return -ENXIO;
+ 	}
+ 
++	/* change */
++	if (clkch == cmu->mshc_clkch) {
++		if (div > CMU_CLKCH_CTL_VAL_CLKDIV_MAX) {
++			div /= CMU_MSHC_DIV;
++			mmio_clrbits_32(cmu->base + CMU_GPR_AVLSP_MSHC_CFG, CMU_MSHC_CLKDIV);
++		} else {
++			mmio_setbits_32(cmu->base + CMU_GPR_AVLSP_MSHC_CFG, CMU_MSHC_CLKDIV);
++		}
++	}
+ 	reg = mmio_read_32(clkch_reg);
+-	div = (reg & CMU_CLKCH_CTL_VAL_CLKDIV_MASK) >>
+-	      CMU_CLKCH_CTL_VAL_CLKDIV_SHIFT;
++	reg &= ~CMU_CLKCH_CTL_VAL_CLKDIV_MASK;
++	reg |=  CMU_CLKCH_CTL_VAL_CLKDIV_SET(div) | CMU_CLKCH_CTL_SET_CLKDIV;
++	mmio_write_32(clkch_reg, reg);
+ 
+-	if (clkch == cmu->mshc_clkch &&
+-	    !(mmio_read_32(cmu->base + CMU_GPR_AVLSP_MSHC_CFG) &
+-	      CMU_MSHC_CLKDIV)) {
+-		div *= CMU_MSHC_DIV;
++	/* wait */
++	for (timeout = timeout_init_us(100000); !timeout_elapsed(timeout);) {
++		if (mmio_read_32(clkch_reg) & CMU_CLKCH_CTL_LOCK_CLKDIV) {
++			INFO("%s: base=0x%lx, ch=%d, div=%d\n",
++				__func__, cmu->base, clkch, div);
++			return 0;
++		}
+ 	}
+ 
+-	return div;
++	ERROR("%s: base=0x%lx, ch=%u, div=%u, lock timeout\n",
++		__func__, cmu->base, clkch, div);
++	return -ETIMEDOUT;
++}
++
++/* todo: rework */
++/* equivalent: cmu_clkch_div_set */
++static void cmu_pllinit_div_set(const uintptr_t base,
++				const cmu_pll_ctl_vals_t *const pllinit)
++{
++	int nf = (((uint64_t)pllinit->clkfhi << CLKFHI_SHIFT) +
++		       ((uint64_t)pllinit->clkflo << CLKFLO_SHIFT))
++		       / 0x200000000;
++	int od = pllinit->clkod+1;
++	int nr = pllinit->clkr+1;
++
++	INFO("%s: base=0x%lx, nr=%d, od=%d, nf=%d\n",
++		__func__, base, nr, od, nf);
++
++	cmu_pll_set_nr(base, nr);
++	cmu_pll_set_od(base, od);
++	cmu_pll_set_nf(base, nf);
++
++	/* IIGAIN, IPGAIN, IGAIN, PGAIN */
++	mmio_clrsetbits_32(base + CMU_PLL_CTL4_REG,
++			   CMU_PLL_CTL4_IIGAIN_LGMLT_MASK |
++			   CMU_PLL_CTL4_IPGAIN_LGMLT_MASK |
++			   CMU_PLL_CTL4_IGAIN_LGMLT_MASK  |
++			   CMU_PLL_CTL4_PGAIN_LGMLT_MASK,
++			   CMU_PLL_CTL4_IIGAIN_LGMLT_SET(pllinit->iigain) |
++			   CMU_PLL_CTL4_IPGAIN_LGMLT_SET(pllinit->ipgain) |
++			   CMU_PLL_CTL4_IGAIN_LGMLT_SET(pllinit->igain)	  |
++			   CMU_PLL_CTL4_PGAIN_LGMLT_SET(pllinit->pgain));
++}
++
++
++/*
++// -------------------
++// misc
++// -------------------
++*/
++static int cmu_set_core_rate (const struct cmu_desc *const cmu,
++			      uint64_t frefclk,
++			      const uint64_t fpllreq)
++{
++	int err;
++
++	/* prepare */
++	if (!cmu) {
++		return -ENXIO;
++	}
++	if (!frefclk) {
++		frefclk = cmu->frefclk;
++	}
++
++	/* change */
++	mmca57_reconf_sclken(cmu->base, 2);
++	err = cmu_pll_div_set(cmu, frefclk, fpllreq);
++	if (err) {
++		return err;
++	}
++	/* wait */
++	/*
++	if (cmu_pll_is_enabled(cmu->base)) {
++		err = cmu_pll_lock_debounce(cmu->base);
++	}
++	*/
++	return err;
++}
++
++static int cmu_set_periph_rate(const struct cmu_desc *const cmu,
++			       uint64_t frefclk,
++			       const uint64_t fpllreq)
++{
++	int err;
++
++	/* prepare */
++	if (!cmu) {
++		return -ENXIO;
++	}
++	if (!frefclk) {
++		frefclk = cmu->frefclk;
++	}
++
++	/*
++	if (!cmu_pll_is_enabled(cmu->base)) {
++		return cmu_pll_div_set(cmu, frefclk, fpllreq);
++	}
++	*/
++
++	/* config */
++	/*
++	mmio_clrbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
++	mmio_setbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_CTL_EN);
++	mmio_clrbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_BYPASS);
++	*/
++
++	/* change */
++	err = cmu_pll_div_set(cmu, frefclk, fpllreq);
++	if (err) {
++		return err;
++	}
++
++	/* wait */
++	mmio_setbits_32(cmu->base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_RST);
++	/*
++	err = cmu_pll_lock_debounce(cmu->base);
++	if (err) {
++		return err;
++	}
++	*/
++
++	/* enable */
++	/*
++	mmio_setbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
++	mmio_clrbits_32(cmu->base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWRST);
++	*/
++
++	return 0;
++}
++
++static struct cmu_desc *const cmu_desc_get_by_base(const uintptr_t base)
++{
++	int idx;
++
++	if (!base) {
++		return NULL;
++	}
++
++	for (idx = 0; ; ++idx) {
++		struct cmu_desc *const cmu = cmu_desc_get_by_idx(idx);
++		if (!cmu) {
++			break;
++		}
++		if (cmu->base == base) {
++			return cmu;
++		}
++	}
++	INFO("%s: base=0x%lx, fail\n", __func__, base);
++	return NULL;
++}
++
++static uintptr_t cmu_clkch_get_reg(const uintptr_t base, const unsigned clkch)
++{
++	return base + CMU_CLKCH0_CTL_REG + clkch * 0x10;
++}
++
++static int cmu_pll_lock_debounce(const uintptr_t base)
++{
++	uint64_t debounce, timeout;
++
++	for (timeout = timeout_init_us(100000); !timeout_elapsed(timeout);) {
++		debounce = timeout_init_us(10000);
++		while (mmio_read_32(base + CMU_PLL_CTL0_REG) & CMU_PLL_CTL0_LOCK) {
++			if (timeout_elapsed(debounce)) {
++				INFO("%s: base=0x%lx, stable\n", __func__, base);
++				return 0;
++			}
++		}
++	}
++	ERROR("%s: base=0x%lx, timeout\n", __func__, base);
++	return -ETIMEDOUT;
++}
++
++struct cmu_desc *const cmu_desc_get_by_idx(const unsigned idx)
++{
++	static struct cmu_desc cmus[20];
++	if (idx >= ARRAY_SIZE(cmus)) {
++		return NULL;
++	}
++	return &cmus[idx];
++}
++
++bool cmu_is_mmca57(const uintptr_t base)
++{
++	return base == MMCA57_0_LCRU ||
++	       base == MMCA57_1_LCRU ||
++	       base == MMCA57_2_LCRU ||
++	       base == MMCA57_3_LCRU;
++}
++
++
++/*
++// -------------------
++// fixme pls
++// -------------------
++*/
++
++/* todo: rework */
++/* equivalent: cmu_clkch_div_set + cmu_clkch_enable */
++void cmu_clkch_enable_by_base(const uintptr_t base, const unsigned div)
++{
++	uint64_t timeout;
++	uint32_t reg;
++
++	/* disable() */
++	mmio_clrbits_32(base, CMU_CLKCH_CTL_CLK_EN);
++	reg = mmio_read_32(base);
++	if (reg & CMU_CLKCH_CTL_CLK_EN) {
++		INFO("%s: base=0x%lx, already\n", __func__, base);
++		return;
++	}
++
++	/* change */
++	reg = mmio_read_32(base);
++	reg &= ~CMU_CLKCH_CTL_VAL_CLKDIV_MASK;
++	reg |=  CMU_CLKCH_CTL_VAL_CLKDIV_SET(div) | CMU_CLKCH_CTL_SET_CLKDIV;
++	mmio_write_32(base, reg);
++	/* wait */
++	timeout = timeout_init_us(10000);
++	while (!(mmio_read_32(base) & CMU_CLKCH_CTL_LOCK_CLKDIV)) {
++		if (timeout_elapsed(timeout)) {
++			ERROR("%s: base=0x%lx, div=%u, timeout\n", __func__, base, div);
++			return;
++		}
++	}
++
++	/* enable */
++	mmio_setbits_32(base, CMU_CLKCH_CTL_CLK_EN);
++	timeout = timeout_init_us(10000);
++	while (!(mmio_read_32(base) & CMU_CLKCH_CTL_CLK_RDY)) {
++		if (timeout_elapsed(timeout)) {
++			ERROR("%s: base=0x%lx, div=%u, timeout\n", __func__, base, div);
++			return;
++		}
++	}
++	mmio_clrbits_32(base, CMU_CLKCH_CTL_SWRST);
++
++	INFO("%s: base=0x%lx, enable\n", __func__, base);
++}
++
++/* todo: rework */
++/* equivalent: cmu_pll_set_rate() */
++void cmu_pll_on(const uintptr_t base, const cmu_pll_ctl_vals_t *const pllinit)
++{
++	int err;
++
++	if (base == MMAVLSP_LCRU) {
++		INFO("%s: base=0x%lx, skip\n", __func__, base);
++		return;
++	}
++
++	/* config */
++	mmio_clrbits_32(base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
++	mmio_setbits_32(base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_CTL_EN);
++	mmio_clrbits_32(base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_BYPASS);
++
++	/* change */
++	cmu_pllinit_div_set(base, pllinit);
++
++	/* wait */
++	mmio_setbits_32(base + CMU_PLL_CTL0_REG, CMU_PLL_CTL0_RST);
++	err = cmu_pll_lock_debounce(base);
++	if (err) {
++		return;
++	}
++
++	/* enable */
++	mmio_setbits_32(base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWEN);
++	mmio_clrbits_32(base + CMU_PLL_CTL6_REG, CMU_PLL_CTL6_SWRST);
++
++	INFO("%s: base=0x%lx, ON\n", __func__, base);
++}
++
++static void cmu_pll_set_od(const uintptr_t base, uint32_t od)
++{
++	uint32_t reg;
++	reg = mmio_read_32(base + CMU_PLL_CTL0_REG);
++	reg &= ~CMU_PLL_CTL0_CLKOD_MASK;
++	reg |= CMU_PLL_CTL0_CLKOD_SET(od-1);
++	mmio_write_32(base + CMU_PLL_CTL0_REG, reg);
++}
++
++static void cmu_pll_set_nr(const uintptr_t base, uint32_t nr)
++{
++	uint32_t reg;
++	reg = mmio_read_32(base + CMU_PLL_CTL0_REG);
++	reg &= ~CMU_PLL_CTL0_CLKR_MASK;
++	reg |= CMU_PLL_CTL0_CLKR_SET(nr-1);
++	mmio_write_32(base + CMU_PLL_CTL0_REG, reg);
++}
++
++static void cmu_pll_set_nf(const uintptr_t base, uint32_t nf)
++{
++	uint32_t hi = ((nf * 0x200000000) & CLKFHI_MASK) >> CLKFHI_SHIFT;
++	uint32_t lo = ((nf * 0x200000000) & CLKFLO_MASK) >> CLKFLO_SHIFT;
++
++	mmio_write_32(base + CMU_PLL_CTL2_REG, hi);
++	mmio_write_32(base + CMU_PLL_CTL1_REG, lo);
+ }

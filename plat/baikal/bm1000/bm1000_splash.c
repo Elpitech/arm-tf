@@ -517,7 +517,7 @@ int bmp_to_fb(uintptr_t fb, modeline_t *mode, uint8_t *bmp_file, int dx, int dy,
 void hdmi_early_splash(uint8_t *bmp_file)
 {
 	int fb_cpp;
-#ifdef BAIKAL_MBM
+#if defined(BAIKAL_MBM) && (BOARD_VER == 0)
 	gpio_out_rst(MMAVLSP_GPIO32_BASE, BAIKAL_HDMI_CLKEN_GPIO_PIN);
 	gpio_dir_set(MMAVLSP_GPIO32_BASE, BAIKAL_HDMI_CLKEN_GPIO_PIN);
 #endif

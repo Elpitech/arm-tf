@@ -231,11 +231,11 @@ exit:
 }
 
 static int exec(int line,
-	 uint8_t cmd_op,
-	 uint32_t address,
-	 void *buf,
-	 uint32_t lenbuf,
-	 int baudr)
+	uint8_t cmd_op,
+	uint32_t address,
+	void *buf,
+	uint32_t lenbuf,
+	int baudr)
 {
 	uint8_t cmd[SPI_CMD_LEN];
 	uint8_t *in = 0, *out = 0;
@@ -426,6 +426,9 @@ int dw_spi_erase(int line, uint32_t adr, size_t size, size_t sector_size)
 
 	VERBOSE("SPI: %s(0x%x, 0x%lx)\n", __func__, adr, size);
 
+	if (!adr_mode)
+		dw_spi_init(line);
+
 	if (!sector_size) {
 		ERROR("SPI: %s: incorrect sector_size: %lu\n", __func__, sector_size);
 		return -EINVAL;
@@ -463,6 +466,9 @@ int dw_spi_write(int line, uint32_t adr, void *data, size_t size)
 	uint8_t *pdata = data;
 
 	VERBOSE("SPI: %s(0x%x, 0x%lx)\n", __func__, adr, size);
+
+	if (!adr_mode)
+		dw_spi_init(line);
 
 	while (size) {
 		const int baudr = 16;
@@ -508,6 +514,9 @@ int dw_spi_read(int line, uint32_t adr, void *data, size_t size)
 	int baudr = 16;
 
 	VERBOSE("SPI: %s(0x%x, 0x%lx)\n", __func__, adr, size);
+
+	if (!adr_mode)
+		dw_spi_init(line);
 
 	while (size) {
 		part = MIN(size, SPI_MAX_READ);

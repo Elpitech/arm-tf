@@ -136,7 +136,7 @@ void mmavlsp_init(void)
 	cmu_clkch_enable_by_base(MMAVLSP_CMU0_CLKCHCTL_VDU_AXI,		AVLSP_CLK_300MHZ);
 	cmu_clkch_enable_by_base(MMAVLSP_CMU0_CLKCHCTL_SMMU,		AVLSP_CLK_300MHZ);
 
-#ifdef BAIKAL_MBM
+#if defined(BAIKAL_MBM) && (BOARD_VER == 0)
 	gpio32_out_rst(BAIKAL_LVDS_CLKEN_GPIO_PIN);
 	gpio32_dir_set(BAIKAL_LVDS_CLKEN_GPIO_PIN);
 #endif

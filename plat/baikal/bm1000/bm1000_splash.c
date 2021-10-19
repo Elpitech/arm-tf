@@ -235,7 +235,7 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 		mmio_write_32(vdu_base + BAIKAL_VDU_REG_PWMFR, pwmfr | BAIKAL_VDU_PWMFR_PWMPCR | BAIKAL_VDU_PWMFR_PWMFCE);
 
 		/* Enable backlight */
-#ifdef BAIKAL_MBM
+#if defined(BAIKAL_MBM) && (BOARD_VER == 2)
 		gpio32_out_rst(BAIKAL_LVDS_BKLT_EN_GPIO_PIN);
 		gpio32_dir_set(BAIKAL_LVDS_BKLT_EN_GPIO_PIN);
 #endif
@@ -486,10 +486,6 @@ int bmp_to_fb(uintptr_t fb, modeline_t *mode, uint8_t *bmp_file, int dx, int dy,
 void hdmi_early_splash(uint8_t *bmp_file)
 {
 	int fb_cpp;
-#ifdef BAIKAL_MBM
-	gpio32_out_rst(BAIKAL_HDMI_CLKEN_GPIO_PIN);
-	gpio32_dir_set(BAIKAL_HDMI_CLKEN_GPIO_PIN);
-#endif
 	hdmi_init_av_composer(&hdmi_video_mode);
 	hdmi_phy_configure();
 	hdmi_enable_video_path(&hdmi_video_mode);

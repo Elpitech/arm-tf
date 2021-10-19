@@ -81,7 +81,7 @@ void mmxgbe_init(void)
 			MMXGBE_ASYNCRES_REG_DMA_NICS_RES |
 			MMXGBE_ASYNCRES_REG_DMA_NICM_RES);
 
-#ifdef BAIKAL_MBM
+#if defined(BAIKAL_MBM) && (BOARD_VER == 0)
 	gpio32_out_rst(BAIKAL_HDMI_CLKEN_GPIO_PIN);
 	gpio32_dir_set(BAIKAL_HDMI_CLKEN_GPIO_PIN);
 #endif

@@ -13,10 +13,13 @@
 
 #include "ddr_spd.h"
 
-#define SPD_DDR0_ADDR 0x50
-#define SPD_DDR1_ADDR 0x52
+#define SPD_DDR0_ADDR_CH0 0x50
+#define SPD_DDR0_ADDR_CH1 0x51
+#define SPD_DDR1_ADDR_CH0 0x52
+#define SPD_DDR1_ADDR_CH1 0x53
 
-static const uint8_t spd_bus_addrs[] = {SPD_DDR0_ADDR, SPD_DDR1_ADDR};
+static const uint8_t spd_bus_addrs[] = {SPD_DDR0_ADDR_CH0, SPD_DDR0_ADDR_CH1,
+					SPD_DDR1_ADDR_CH0, SPD_DDR1_ADDR_CH1};
 
 unsigned ddr_dimm_presence(void)
 {
@@ -34,7 +37,7 @@ unsigned ddr_dimm_presence(void)
 		    sizeof(startaddr), spdhdr, sizeof(spdhdr)) == sizeof(spdhdr)) {
 #endif
 			if (spdhdr[2] == SPD_MEMTYPE_DDR4) {
-				INFO("DIMM%u: DDR4 SDRAM is detected\n", dimm_idx);
+				INFO("DIMM%u-%u: DDR4 SDRAM is detected\n", dimm_idx / 2, dimm_idx & 1);
 				ret |= 1 << dimm_idx;
 			} else {
 				ERROR("DIMM%u: unsupported SDRAM type\n", dimm_idx);
@@ -58,10 +61,10 @@ int ddr_read_spd(const unsigned port, struct ddr4_spd_eeprom *spd)
 	memset(spd, 0, sizeof(*spd));
 
 #if defined(BAIKAL_DIMM_SPD_I2C)
-	rxsize = i2c_txrx(BAIKAL_DIMM_SPD_I2C, spd_bus_addrs[port], &startaddr,
+	rxsize = i2c_txrx(BAIKAL_DIMM_SPD_I2C, spd_bus_addrs[port * 2], &startaddr,
 			  sizeof(startaddr), spd, sizeof(*spd));
 #elif defined(BAIKAL_DIMM_SPD_SMBUS)
-	rxsize = smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, spd_bus_addrs[port], &startaddr,
+	rxsize = smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, spd_bus_addrs[port * 2], &startaddr,
 			    sizeof(startaddr), spd, sizeof(*spd));
 #endif
 	if (rxsize != sizeof(*spd)) {

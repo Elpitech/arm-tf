@@ -23,20 +23,20 @@ void ddr_odt_configuration(const unsigned port, const uint16_t crc_val, struct d
 
 static void tzc_set_transparent(const unsigned conf)
 {
-	if (conf & 0x1) {
+	if (conf & 0x3) {
 		mmio_write_32(MMTZC0_TZC400_BASE + TZC_GATEKEEPER_OFS, 0xf);
 		mmio_write_32(MMTZC0_TZC400_BASE + TZC_RATTRIBUTE_OFS, 0xc000000f);
 		mmio_write_32(MMTZC0_TZC400_BASE + TZC_REIDACCESS_OFS, 0xffffffff);
 	}
 
-	if (conf & 0x2) {
+	if (conf & 0xc) {
 		mmio_write_32(MMTZC1_TZC400_BASE + TZC_GATEKEEPER_OFS, 0xf);
 		mmio_write_32(MMTZC1_TZC400_BASE + TZC_RATTRIBUTE_OFS, 0xc000000f);
 		mmio_write_32(MMTZC1_TZC400_BASE + TZC_REIDACCESS_OFS, 0xffffffff);
 	}
 }
 
-static int ddr_port_init(int port, bool dual_mode)
+static int ddr_port_init(int port, bool dual_mode, bool double_dimm)
 {
 	int ret;
 	struct ddr4_spd_eeprom spd;
@@ -56,6 +56,10 @@ static int ddr_port_init(int port, bool dual_mode)
 		data.single_ddr = 0;
 	} else {
 		data.single_ddr = 1;
+	}
+
+	if (double_dimm) {
+		data.dimms = 2;
 	}
 
 	if (data.ecc_on) {
@@ -95,8 +99,8 @@ int dram_init(void)
 	int ret = 0;
 	const unsigned conf = ddr_dimm_presence();
 
-	if (conf & 0x1) {
-		ret = ddr_port_init(0, (conf & 0x2));
+	if (conf & 0x3) {
+		ret = ddr_port_init(0, !!(conf & 0xc), (conf & 0x3) == 0x3);
 	} else {
 		ddr_lcru_disable(0);
 	}
@@ -105,9 +109,9 @@ int dram_init(void)
 		goto error;
 	}
 
-	if (conf & 0x2) {
-		ret = ddr_port_init(1, (conf & 0x1));
-		if ((ret < 0) & (conf & 0x1)) {
+	if (conf & 0xc) {
+		ret = ddr_port_init(1, !!(conf & 0x3), (conf & 0xc) == 0xc);
+		if ((ret < 0) && (conf & 0x1)) {
 			ddr_lcru_disable(0);
 			goto error;
 		}

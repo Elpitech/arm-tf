@@ -24,20 +24,20 @@ void ddr_odt_configuration(const unsigned port, const uint16_t crc_val, struct d
 
 static void tzc_set_transparent(const unsigned conf)
 {
-	if (conf & 0x1) {
+	if (conf & 0x3) {
 		mmio_write_32(MMTZC0_TZC400_BASE + TZC_GATEKEEPER_OFS, 0xf);
 		mmio_write_32(MMTZC0_TZC400_BASE + TZC_RATTRIBUTE_OFS, 0xc000000f);
 		mmio_write_32(MMTZC0_TZC400_BASE + TZC_REIDACCESS_OFS, 0xffffffff);
 	}
 
-	if (conf & 0x2) {
+	if (conf & 0xc) {
 		mmio_write_32(MMTZC1_TZC400_BASE + TZC_GATEKEEPER_OFS, 0xf);
 		mmio_write_32(MMTZC1_TZC400_BASE + TZC_RATTRIBUTE_OFS, 0xc000000f);
 		mmio_write_32(MMTZC1_TZC400_BASE + TZC_REIDACCESS_OFS, 0xffffffff);
 	}
 }
 
-static int ddr_port_init(int port, const struct ddr4_spd_eeprom *spd, bool dual_mode)
+static int ddr_port_init(int port, const struct ddr4_spd_eeprom *spd, bool dual_mode, bool double_dimm)
 {
 	int ret;
 	struct ddr_configuration data = {0};
@@ -51,6 +51,10 @@ static int ddr_port_init(int port, const struct ddr4_spd_eeprom *spd, bool dual_
 		data.single_ddr = 0;
 	} else {
 		data.single_ddr = 1;
+	}
+
+	if (double_dimm) {
+		data.dimms = 2;
 	}
 
 #if !ECC_ENABLE
@@ -93,30 +97,40 @@ int dram_init(void)
 {
 	int ret = 0;
 	unsigned conf = 0;
-	const struct ddr4_spd_eeprom *spd[2];
+	const struct ddr4_spd_eeprom *spd[4];
 
 	spd[0] = ddr_read_spd(0);
 	if (spd[0] != NULL) {
 		if (spd[0]->mem_type == SPD_MEMTYPE_DDR4) {
 			INFO("DIMM0: DDR4 SDRAM is detected\n");
 			conf |= 0x1;
+			spd[1] = ddr_read_spd(1);
+			if (spd[1] != NULL && !memcmp(spd[0], spd[1], 128)) {
+				INFO("DIMM0-1 is present\n");
+				conf |= 0x2;
+			}
 		} else {
 			ERROR("DIMM0: unsupported SDRAM type\n");
 		}
 	}
 
-	spd[1] = ddr_read_spd(1);
-	if (spd[1] != NULL) {
-		if (spd[1]->mem_type == SPD_MEMTYPE_DDR4) {
+	spd[2] = ddr_read_spd(2);
+	if (spd[2] != NULL) {
+		if (spd[2]->mem_type == SPD_MEMTYPE_DDR4) {
 			INFO("DIMM1: DDR4 SDRAM is detected\n");
-			conf |= 0x2;
+			conf |= 0x4;
+			spd[3] = ddr_read_spd(3);
+			if (spd[3] != NULL && !memcmp(spd[2], spd[3], 128)) {
+				INFO("DIMM1-1 is present\n");
+				conf |= 0x8;
+			}
 		} else {
 			ERROR("DIMM1: unsupported SDRAM type\n");
 		}
 	}
 
 	if (conf & 0x1) {
-		ret = ddr_port_init(0, spd[0], (conf & 0x2));
+		ret = ddr_port_init(0, spd[0], (conf & 0x4), (conf & 0x3) == 0x3);
 	} else {
 		ddr_lcru_disable(0);
 	}
@@ -125,8 +139,8 @@ int dram_init(void)
 		goto error;
 	}
 
-	if (conf & 0x2) {
-		ret = ddr_port_init(1, spd[1], (conf & 0x1));
+	if (conf & 0x4) {
+		ret = ddr_port_init(1, spd[2], (conf & 0x1), (conf & 0xc) == 0xc);
 		if ((ret < 0) & (conf & 0x1)) {
 			ddr_lcru_disable(0);
 			goto error;

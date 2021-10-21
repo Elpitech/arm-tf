@@ -15,8 +15,10 @@
 
 #include "ddr_spd.h"
 
-#define DIMM0_SPD_ADDR	0x50
-#define DIMM1_SPD_ADDR	0x52
+#define DIMM0_SPD_ADDR0	0x50
+#define DIMM0_SPD_ADDR1	0x51
+#define DIMM1_SPD_ADDR0	0x52
+#define DIMM1_SPD_ADDR1	0x53
 
 #define SPD_PAGE_SIZE	256
 #define SPD_FULL_SIZE	512
@@ -42,46 +44,61 @@ static const uint8_t spd_static[] = {
 };
 #endif
 
+static int spdbus_txrx(uint8_t addr, const uint8_t *txbuf, int txsize, uint8_t *rxbuf, int rxsize)
+{
+#if defined(BAIKAL_DIMM_SPD_I2C)
+	return i2c_txrx(BAIKAL_DIMM_SPD_I2C, addr, txbuf, txsize, rxbuf, rxsize);
+#elif defined(BAIKAL_DIMM_SPD_SMBUS)
+	return smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, addr, txbuf, txsize, rxbuf, rxsize);
+#else
+	return 0;
+#endif
+}
+
 void* ddr_read_spd(const unsigned dimm_idx)
 {
 	extern uint8_t spd_bytes[1024];
-	uint8_t *p = &spd_bytes[512 * dimm_idx];
+	uint8_t *p = &spd_bytes[256 * dimm_idx];
 #ifndef BAIKAL_DIMM_SPD_STATIC
-	const uint8_t spd_bus_addrs[] = {DIMM0_SPD_ADDR, DIMM1_SPD_ADDR};
+	const uint8_t spd_bus_addrs[] = {DIMM0_SPD_ADDR0, DIMM0_SPD_ADDR1,
+					 DIMM1_SPD_ADDR0, DIMM1_SPD_ADDR1};
 	const uint8_t startaddr = 0;
 	int rxsize;
 
 	assert(dimm_idx < ARRAY_SIZE(spd_bus_addrs));
 
-# if defined(BAIKAL_DIMM_SPD_I2C)
-	i2c_txrx(BAIKAL_DIMM_SPD_I2C, 0x36, &startaddr, sizeof(startaddr), NULL, 0);
-	rxsize = i2c_txrx(BAIKAL_DIMM_SPD_I2C, spd_bus_addrs[dimm_idx],
+	spdbus_txrx(0x36, &startaddr, sizeof(startaddr), NULL, 0);
+	if (!(dimm_idx & 1)) {
+		rxsize = spdbus_txrx(spd_bus_addrs[dimm_idx],
 			  &startaddr, sizeof(startaddr), p, SPD_PAGE_SIZE);
 
-	i2c_txrx(BAIKAL_DIMM_SPD_I2C, 0x37, &startaddr, sizeof(startaddr), NULL, 0);
-	rxsize += i2c_txrx(BAIKAL_DIMM_SPD_I2C, spd_bus_addrs[dimm_idx],
+		spdbus_txrx(0x37, &startaddr, sizeof(startaddr), NULL, 0);
+		rxsize += spdbus_txrx(spd_bus_addrs[dimm_idx],
 			   &startaddr, sizeof(startaddr), p + SPD_PAGE_SIZE, SPD_PAGE_SIZE);
 
-	i2c_txrx(BAIKAL_DIMM_SPD_I2C, 0x36, &startaddr, sizeof(startaddr), NULL, 0);
-# elif defined(BAIKAL_DIMM_SPD_SMBUS)
-	smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, 0x36, &startaddr, sizeof(startaddr), NULL, 0);
-	rxsize = smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, spd_bus_addrs[dimm_idx],
-			    &startaddr, sizeof(startaddr), p, SPD_PAGE_SIZE);
-
-	smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, 0x37, &startaddr, sizeof(startaddr), NULL, 0);
-	rxsize += smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, spd_bus_addrs[dimm_idx],
-			     &startaddr, sizeof(startaddr), p + SPD_PAGE_SIZE, SPD_PAGE_SIZE);
-
-	smbus_txrx(BAIKAL_DIMM_SPD_SMBUS, 0x36, &startaddr, sizeof(startaddr), NULL, 0);
-# endif
-	if (rxsize != SPD_FULL_SIZE) {
-		return NULL;
+		spdbus_txrx(0x36, &startaddr, sizeof(startaddr), NULL, 0);
+		if (rxsize != SPD_FULL_SIZE) {
+			return NULL;
+		}
+	} else {
+		/* Second DIMM in the channel overwrites data 0x100-0x17f
+		 * from the first one but leaves 0x180-0x1ff intact.
+		 * This is where we are going to store tuning prameters. */
+		rxsize = spdbus_txrx(spd_bus_addrs[dimm_idx],
+			  &startaddr, sizeof(startaddr), p, 128);
+		if (rxsize != 128) {
+			return NULL;
+		}
 	}
 #else /* defined(BAIKAL_DIMM_SPD_STATIC) */
-	memcpy(p, spd_static, sizeof(spd_static));
+	if (!(dimm_idx & 1)) {
+		memcpy(p, spd_static, sizeof(spd_static));
+	} else {
+		return NULL;
+	}
 #endif
 	if (crc16(p +   0, 126, 0) != ((p[127] << 8) | p[126]) ||
-	    crc16(p + 128, 126, 0) != ((p[255] << 8) | p[254])) {
+	    (!(dimm_idx & 1) && (crc16(p + 128, 126, 0) != ((p[255] << 8) | p[254])))) {
 		ERROR("DIMM%u: SPD CRC checksum fail\n", dimm_idx);
 		return NULL;
 	}

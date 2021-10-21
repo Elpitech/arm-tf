@@ -177,6 +177,7 @@ static int baikal_ddrphy_set_registers(const unsigned port, struct phy_content *
 	BM_DDR_PUB_WRITE(port, DDR_PUB_DTCR1, phy->DTCR1_);
 	BM_DDR_PUB_WRITE(port, DDR_PUB_DSGCR, phy->DSGCR_);
 	BM_DDR_PUB_WRITE(port, DDR_PUB_ZQCR, phy->ZQCR_);
+	BM_DDR_PUB_WRITE(port, DDR_PUB_ZQ1PR, phy->ZQ1PR_);
 
 	if (phy->dbus_half) {
 		uint32_t DXnGCR0_val = BM_DDR_PUB_READ(port, DDR_PUB_DX4GCR0);
@@ -218,6 +219,10 @@ static int baikal_ddrphy_pir_training(const unsigned port, uint32_t mode)
 	for (timeout = timeout_init_us(10000);;) {
 		const uint32_t reg = BM_DDR_PUB_READ(port, DDR_PUB_PGSR0);
 		if (reg & 0x1) {
+			if (reg & 0x0ff80000) {
+				ret = reg;
+				ERROR("%s: completed with errors, 0x%x\n", __func__, ret);
+			}
 			break;
 		} else if (timeout_elapsed(timeout)) {
 			ret = reg;
@@ -227,6 +232,7 @@ static int baikal_ddrphy_pir_training(const unsigned port, uint32_t mode)
 	}
 
 	udelay(1);
+
 	return ret;
 }
 
@@ -293,9 +299,9 @@ static int baikal_ddrphy_dram_init(const unsigned port, unsigned clock_mhz)
 	 * During DDR4 write leveling, dynamic ODT must be disabled (RTT_WR in MR2 register).
 	 */
 	const uint16_t mr2_val = BM_DDRC_READ(port, DDRC_INIT4) >> 16;
-	const uint16_t rttWR = mr2_val & (0x3 << 9);
+	const uint16_t rttWR = mr2_val & (0x7 << 9);
 	if (rttWR) {
-		BM_DDR_PUB_WRITE(port, DDR_PUB_MR2, mr2_val & ~(0x3 << 9));
+		BM_DDR_PUB_WRITE(port, DDR_PUB_MR2, mr2_val & ~(0x7 << 9));
 	}
 
 	baikal_ddrphy_pir_training(port, DDR_PUB_PIR_DRAM_STEP1);
@@ -396,6 +402,18 @@ int ddr_init(int port, bool dual_mode, struct ddr_configuration *info)
 	ndelay(40);
 
 	baikal_ddrphy_set_registers(port, &phy);
+
+	/* set ODTCRn according to ODTMAP */
+	unsigned int i;
+	uint32_t reg;
+	for (i = 0; i < 4; i++) {
+		reg = (ddrc.ODTMAP_ >> (8 * i)) & 0xff;
+		if (reg != (1 << i)) { /* ODTMAP differs from the default for this rank */
+			reg = ((reg & 0xf) << 16) | ((reg >> 4) & 0xf);
+			BM_DDR_PUB_WRITE(port, DDR_PUB_RANKIDR, i);
+			BM_DDR_PUB_WRITE(port, DDR_PUB_ODTCR, reg);
+		}
+	}
 
 	ret = baikal_ddrphy_pir_training(port, DDR_PUB_PIR_PHY_INIT);
 	if (ret) {

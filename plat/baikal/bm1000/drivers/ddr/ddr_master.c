@@ -16,8 +16,13 @@
 
 #define DDR_CRC_ENABLE 0
 
-#define CLOCK_PS(x)	div_round_up((x), data->tCK)
-#define CLOCK_NS(x)	div_round_up((x) * 1000, data->tCK)
+#ifndef CONFIG_AL	/* possible values: 0 (not used), 1 (CL-1) or 2 (CL-2) */
+#define CONFIG_AL	1	/* (CL-1) is default */
+#endif
+
+#define CLOCK_PS(x)	\
+	(uint32_t)((((uint64_t)(x) * 1000) / data->tCK + 974) / 1000)
+#define CLOCK_NS(x)	CLOCK_PS((uint64_t)(x) * 1000)
 
 #define SPD_TO_PS(mtb, ftb)	((mtb) * 125 + (ftb))
 
@@ -95,7 +100,7 @@ static inline uint16_t set_mr5(const uint32_t pl, const uint32_t rtt_park)
 
 void ddrc_set_default_vals(struct ctl_content *ddrc)
 {
-	ddrc->MSTR_	  = 0x4f040010;
+	ddrc->MSTR_	  = 0x41040010; /* rank 0 is always present, other ranks added later */
 	ddrc->RFSHTMG_	  = 0x0092014a;
 	ddrc->ECCCFG0_	  = 0x00000000;
 	ddrc->ECCCFG1_	  = 0x0;
@@ -206,17 +211,29 @@ int ddrc_config_content(struct ctl_content *ddrc,
 		ddrc->SARSIZE2_ = (ddrc->SARSIZE2_ + 1) * 2 - 1; /* region size 240 GiB */
 	}
 
-	/*
-	 * We have two CS signals (two ranks) per DIMM slot at Baikal-M Development Board
-	 * valid values for Mstr.active_ranks are: 0x1, 0x11, 0x1111
-	 */
-	if (data->dimms == 1) {
-		ddrc->MSTR_ &= ~GENMASK(27, 24);
-		ddrc->MSTR_ |=  GENMASK(27, 24) & (((1 << data->ranks) - 1) << 24);
-	} else {
-		ddrc->MSTR_ &= ~GENMASK(27, 24);
-		ddrc->MSTR_ |=  GENMASK(27, 24) & (0xf << 24);
+	/* we have two CS signals (two ranks) per DIMM slot at Baikal-M Development Board
+	 * valid values for Mstr.active_ranks are: 0x1, 0x11, 0x1111 */
+	/* Also set up ODTMAP for different configs */
+	if (data->dimms == 2) {
+		ddrc->MSTR_ |= 0xf << 24;
+		if (data->ranks == 2) {
+			/* Intel design guide recommends 40Ohm ODT on the higher rank
+			 * of the other dimm. */
+			ddrc->ODTMAP_ |= 0x02020808; /* not tested! */
+		} else {
+			ddrc->MSTR_ |= 0x5 << 24;
+			/* we have few options:
+			 * - RTT_NORM to the other dimm for both R/W (RTT_PARK not used);
+			 * - RTT_NORM or RTT_PARK for R or W (same for both dimms);
+			 * - RTT_NORM or RTT_PARK for dimm 0 or 1 (for both R and W).
+			 */
+			ddrc->ODTMAP_ |= 0x00010004;
+		}
+	} else if (data->ranks == 2) { /* not tested! */
+		ddrc->MSTR_ |= 0x3 << 24;
+		/* do we need ddrc->ODTMAP_ ? */
 	}
+	/* else {} single-rank single dimm does not use RTT_NORM/RTT_PARK, MSTR_ is already OK */
 
 	if (data->dbus_half) {
 		ddrc->MSTR_  |= 1 << 12; /* MSTR_DB_WIDTH::HALF = 1; */
@@ -343,9 +360,11 @@ int ddrc_config_content(struct ctl_content *ddrc,
 	/* BL=8; RD sequential; DLL reset off; set CAS Latency; set Write Recovery; */
 	ddrc->INIT3_ &= ~GENMASK(31, 16);
 	ddrc->INIT3_ |=  GENMASK(31, 16) & (set_mr0(data->CL, data->tWR, data->tRTP) << 16);
-	/* DLL on; DIC=RZQ/5(48 ohm); AL=CL-1; WL off; RTT_NOM=off; TDQS off; Qoff normal */
+	/* DLL on; DIC=RZQ/5(48 ohm); AL=0; WL off; RTT_NOM=off; TDQS off; Qoff normal */
 	ddrc->INIT3_ &= ~GENMASK(15, 0);
-	ddrc->INIT3_ |=  GENMASK(15, 0) & (0x9 | (data->DIC & 0x1) << 1 | (data->RTT_NOM & 0x7) << 8);
+	ddrc->INIT3_ |=  GENMASK(15, 0) & (0x1 | (data->DIC & 0x3) << 1 | (data->RTT_NOM & 0x7) << 8);
+	if (data->AL)
+		ddrc->INIT3_ |= (data->CL - data->AL) << 3;
 	/* CRC on; RTT_WR=off; LP ASR manual, normal temp; set CAS Write Latency */
 	ddrc->INIT4_ &= ~GENMASK(31, 16);
 	ddrc->INIT4_ |=  GENMASK(31, 16) & (set_mr2(data->CWL, data->RTT_WR) << 16);
@@ -655,8 +674,10 @@ int phy_config_content(struct phy_content *phy,
 	phy->DTPR5_ |=  GENMASK(23, 16) & (data->tRC << 16); /* ACTtoACT */
 
 	phy->MR0_ = set_mr0(data->CL, data->tWR, data->tRTP);
-	/* DLL on; DIC RZQ/7 (33 ohm); AL=CL-1; WL off; ODT RTT_NOM off; TDQS off; Qoff normal */
-	phy->MR1_ = 0x9 | (data->DIC & 0x1) << 1 | (data->RTT_NOM & 0x7) << 8;
+	/* DLL on; DIC RZQ/7 (33 ohm); AL=0; WL off; ODT RTT_NOM off; TDQS off; Qoff normal */
+	phy->MR1_ = (0x1 | (data->DIC & 0x3) << 1 | (data->RTT_NOM & 0x7) << 8);
+	if (data->AL)
+		phy->MR1_ |= (data->CL - data->AL) << 3;
 	phy->MR2_ = set_mr2(data->CWL, data->RTT_WR);
 
 	/*
@@ -824,9 +845,19 @@ int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
 #ifdef BAIKAL_DDR_CUSTOM_CLOCK_FREQ
 	if (data->clock_mhz > BAIKAL_DDR_CUSTOM_CLOCK_FREQ) {
 		data->clock_mhz = BAIKAL_DDR_CUSTOM_CLOCK_FREQ;
-		data->tCK = 1000000 / data->clock_mhz;
 	}
 #endif
+	if (data->clock_mhz >= 1333)
+		data->clock_mhz = 1333;
+	else if (data->clock_mhz >= 1200)
+		data->clock_mhz = 1200;
+	else if (data->clock_mhz >= 1066)
+		data->clock_mhz = 1066;
+	else if (data->clock_mhz >= 933)
+		data->clock_mhz = 933;
+	else data->clock_mhz = 800;
+	data->tCK = 1000000 / data->clock_mhz; /* recalculate */
+
 	/* Compute CAS Latency (CL) */
 	uint64_t lat_mask = ((uint64_t)spd->caslat_b1 << 7)  |
 			    ((uint64_t)spd->caslat_b2 << 15) |
@@ -844,7 +875,8 @@ int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
 	}
 
 	if (tmp * data->tCK > 18000) {
-		ERROR("%s: the choosen CAL Latency %u is too large\n", __func__, tmp);
+		ERROR("%s: the chosen CAS Latency %u is too large\n",
+		     __func__, tmp);
 	}
 
 	data->CL = tmp;
@@ -913,8 +945,16 @@ int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
 		data->PL = 8;
 	}
 
-	/* Compute Additive Latency (AL). Note: we set AL to (CL-1) like S.Hudchenko example */
-	data->AL = data->CL - 1;
+	/*
+	 * Compute Additive Latency (AL)
+	 *
+	 * Note: we set AL to (CL-1) like S.Hudchenko example
+	 */
+#if CONFIG_AL == 0
+	data->AL = 0;
+#else
+	data->AL = data->CL - CONFIG_AL;
+#endif
 
 	/* Compute Read Latency (RL) */
 	data->RL = data->AL + data->CL + data->PL;

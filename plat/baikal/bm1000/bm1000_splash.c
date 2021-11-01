@@ -27,6 +27,9 @@ modeline_t default_lvds_video_mode = {148500000, 2, BAIKAL_LVDS_VESA_24,
 modeline_t *lvds_video_mode = &default_lvds_video_mode;
 modeline_t hdmi_video_mode = {25250000, 0, 0, 640, 16, 96, 48, 480, 10, 2, 33};
 
+int panel_enable_pin = -1;
+int panel_enable_polarity;
+
 #define fdt_get_panel_timing(name, result) \
 	do { \
 		prop = fdt_getprop(fdt, node, name, &plen); \
@@ -82,6 +85,12 @@ int fdt_get_panel(modeline_t *modeline)
 			} else {
 				WARN("panel-lvds: unsupported data mapping type\n");
 				return -1;
+			}
+
+			prop = fdt_getprop(fdt, node, "enable-gpios", &plen);
+			if (prop && (plen == sizeof(fdt32_t) * 3)) {
+				panel_enable_pin = fdt32_to_cpu(prop[1]);
+				panel_enable_polarity = !(fdt32_to_cpu(prop[2]) & 1);
 			}
 
 			node = fdt_subnode_offset(fdt, node, "panel-timing");
@@ -236,8 +245,16 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 
 		/* Enable backlight */
 #if defined(BAIKAL_MBM) && (BOARD_VER == 2)
-		gpio32_out_rst(BAIKAL_LVDS_BKLT_EN_GPIO_PIN);
-		gpio32_dir_set(BAIKAL_LVDS_BKLT_EN_GPIO_PIN);
+		if (panel_enable_pin >= 0) {
+			if (panel_enable_polarity)
+				gpio32_out_set(panel_enable_pin);
+			else
+				gpio32_out_rst(panel_enable_pin);
+			gpio32_dir_set(panel_enable_pin);
+		} else {
+			gpio32_out_rst(BAIKAL_LVDS_BKLT_EN_GPIO_PIN);
+			gpio32_dir_set(BAIKAL_LVDS_BKLT_EN_GPIO_PIN);
+		}
 #endif
 
 	} else { /* HDMI VDU */

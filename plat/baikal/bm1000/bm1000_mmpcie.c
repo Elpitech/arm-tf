@@ -1,0 +1,127 @@
+/*
+ * Copyright (c) 2018-2021, Baikal Electronics, JSC. All rights reserved.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#include <lib/mmio.h>
+#include <lib/utils_def.h>
+
+#include <bm1000_cmu.h>
+#include <bm1000_def.h>
+#include <bm1000_private.h>
+
+#define MMPCIE_GPR_MM_RESET_REG				(MMPCIE_GPR_BASE + 0x80)
+#define MMPCIE_GPR_MM_RESET_NIC_SLV_PCIE0_RST		BIT(0)
+#define MMPCIE_GPR_MM_RESET_NIC_SLV_PCIE1_RST		BIT(1)
+#define MMPCIE_GPR_MM_RESET_NIC_SLV_PCIE2_RST		BIT(2)
+#define MMPCIE_GPR_MM_RESET_NIC_SLV_SLV_RST		BIT(3)
+#define MMPCIE_GPR_MM_RESET_NIC_CFG_PCIE0_RST		BIT(4)
+#define MMPCIE_GPR_MM_RESET_NIC_CFG_PCIE1_RST		BIT(5)
+#define MMPCIE_GPR_MM_RESET_NIC_CFG_PCIE2_RST		BIT(6)
+#define MMPCIE_GPR_MM_RESET_NIC_CFG_SLV_RST		BIT(7)
+#define MMPCIE_GPR_MM_RESET_NIC_CFG_TCU_RST		BIT(8)
+
+#define MMPCIE_GPR_PCIE0_SID_PROT_CTL_REG		(MMPCIE_GPR_BASE + 0xd0)
+#define MMPCIE_GPR_PCIE1_SID_PROT_CTL_REG		(MMPCIE_GPR_BASE + 0xd8)
+#define MMPCIE_GPR_PCIE2_SID_PROT_CTL_REG		(MMPCIE_GPR_BASE + 0xe0)
+#define MMPCIE_GPR_SID_PROT_CTL_AWPROT(x)		SETMASK(x,  2, 0)
+#define MMPCIE_GPR_SID_PROT_CTL_WSID_MODE		BIT(5)
+#define MMPCIE_GPR_SID_PROT_CTL_ARPROT(x)		SETMASK(x, 10, 8)
+#define MMPCIE_GPR_SID_PROT_CTL_RSID_MODE		BIT(13)
+
+#define MMPCIE_GPR_MSI_TRANS_CTL0_REG			(MMPCIE_GPR_BASE + 0xe8)
+#define MMPCIE_GPR_MSI_TRANS_CTL0_MSI_AWUSER_MASK	GENMASK(3, 0)
+
+void mmpcie_init(void)
+{
+	uint32_t reg;
+	const cmu_pll_ctl_vals_t mmpcie_cmu0_pll_ctls = {
+		0, 0, 0x78, 0, 0, 0x2c, 0, 0x2c
+	};
+
+	cmu_pll_on(MMPCIE_CMU0_BASE, &mmpcie_cmu0_pll_ctls);
+
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE0_MSTR,  4); /* 375 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE0_SLV,   4); /* 375 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE0_CFG,  30); /*  50 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE1_MSTR,  4); /* 375 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE1_SLV,   4); /* 375 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE1_CFG,  30); /*  50 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE2_MSTR,  3); /* 500 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE2_SLV,   3); /* 500 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_PCIE2_CFG,  30); /*  50 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_TCU_CFG,     4); /* 375 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_TBU0,        4); /* 375 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_TBU1,        4); /* 375 MHz */
+	cmu_clkch_enable_by_base(MMPCIE_CMU0_CLKCHCTL_TBU2,        3); /* 500 MHz */
+
+	/* Deassert reset signals */
+	reg = mmio_read_32(MMPCIE_GPR_MM_RESET_REG);
+	reg &= ~(MMPCIE_GPR_MM_RESET_NIC_CFG_PCIE0_RST |
+		 MMPCIE_GPR_MM_RESET_NIC_CFG_PCIE1_RST |
+		 MMPCIE_GPR_MM_RESET_NIC_CFG_PCIE2_RST |
+		 MMPCIE_GPR_MM_RESET_NIC_CFG_TCU_RST);
+
+	mmio_write_32(MMPCIE_GPR_MM_RESET_REG, reg);
+	reg &= ~MMPCIE_GPR_MM_RESET_NIC_CFG_SLV_RST;
+	mmio_write_32(MMPCIE_GPR_MM_RESET_REG, reg);
+	reg &= ~(MMPCIE_GPR_MM_RESET_NIC_SLV_PCIE0_RST |
+		 MMPCIE_GPR_MM_RESET_NIC_SLV_PCIE1_RST |
+		 MMPCIE_GPR_MM_RESET_NIC_SLV_PCIE2_RST);
+
+	mmio_write_32(MMPCIE_GPR_MM_RESET_REG, reg);
+	reg &= ~MMPCIE_GPR_MM_RESET_NIC_SLV_SLV_RST;
+	mmio_write_32(MMPCIE_GPR_MM_RESET_REG, reg);
+
+	/* Set MSI_AWUSER to 0 */
+	mmio_clrbits_32(MMPCIE_GPR_MSI_TRANS_CTL0_REG,
+			MMPCIE_GPR_MSI_TRANS_CTL0_MSI_AWUSER_MASK);
+
+	/* Configure SMMU StreamID interface */
+	mmio_write_32(MMPCIE_GPR_PCIE0_SID_PROT_CTL_REG,
+		      MMPCIE_GPR_SID_PROT_CTL_AWPROT(2) |
+		      MMPCIE_GPR_SID_PROT_CTL_ARPROT(2) |
+		      MMPCIE_GPR_SID_PROT_CTL_WSID_MODE |
+		      MMPCIE_GPR_SID_PROT_CTL_RSID_MODE);
+
+	mmio_write_32(MMPCIE_GPR_PCIE1_SID_PROT_CTL_REG,
+		      MMPCIE_GPR_SID_PROT_CTL_AWPROT(2) |
+		      MMPCIE_GPR_SID_PROT_CTL_ARPROT(2) |
+		      MMPCIE_GPR_SID_PROT_CTL_WSID_MODE |
+		      MMPCIE_GPR_SID_PROT_CTL_RSID_MODE);
+
+	mmio_write_32(MMPCIE_GPR_PCIE2_SID_PROT_CTL_REG,
+		      MMPCIE_GPR_SID_PROT_CTL_AWPROT(2) |
+		      MMPCIE_GPR_SID_PROT_CTL_ARPROT(2) |
+		      MMPCIE_GPR_SID_PROT_CTL_WSID_MODE |
+		      MMPCIE_GPR_SID_PROT_CTL_RSID_MODE);
+
+	/* Enable non-secure access */
+	mmio_write_32(MMPCIE_NIC_CFG_GPV_REGIONSEC_SMMU,  NIC_GPV_REGIONSEC_NONSECURE);
+	mmio_write_32(MMPCIE_NIC_CFG_GPV_REGIONSEC_PCIE0, NIC_GPV_REGIONSEC_NONSECURE);
+	mmio_write_32(MMPCIE_NIC_CFG_GPV_REGIONSEC_PCIE1, NIC_GPV_REGIONSEC_NONSECURE);
+	mmio_write_32(MMPCIE_NIC_CFG_GPV_REGIONSEC_PCIE2, NIC_GPV_REGIONSEC_NONSECURE);
+
+	mmio_write_32(MMPCIE_NIC_GPV_REGIONSEC_PCIE0, NIC_GPV_REGIONSEC_NONSECURE);
+	mmio_write_32(MMPCIE_NIC_GPV_REGIONSEC_PCIE1, NIC_GPV_REGIONSEC_NONSECURE);
+	mmio_write_32(MMPCIE_NIC_GPV_REGIONSEC_PCIE2, NIC_GPV_REGIONSEC_NONSECURE);
+
+	/* Enable non-secure access to some GPRs */
+	mmio_write_32(MMPCIE_GPR_S_BASE + 0x00,
+		      BIT(0)  | /* MMPCIE_GPR_PCIE0_RESET     */
+		      BIT(1)  | /* MMPCIE_GPR_PCIE0_STATUS    */
+		      BIT(2)  | /* MMPCIE_GPR_PCIE0_GEN_CTL   */
+		      BIT(4)  | /* MMPCIE_GPR_PCIE0_POWER_CTL */
+		      BIT(8)  | /* MMPCIE_GPR_PCIE1_RESET     */
+		      BIT(9)  | /* MMPCIE_GPR_PCIE1_STATUS    */
+		      BIT(10) | /* MMPCIE_GPR_PCIE1_GEN_CTL   */
+		      BIT(12) | /* MMPCIE_GPR_PCIE1_POWER_CTL */
+		      BIT(16) | /* MMPCIE_GPR_PCIE2_RESET     */
+		      BIT(17) | /* MMPCIE_GPR_PCIE2_STATUS    */
+		      BIT(18) | /* MMPCIE_GPR_PCIE2_GEN_CTL   */
+		      BIT(20)); /* MMPCIE_GPR_PCIE2_POWER_CTL */
+
+	mmio_write_32(MMPCIE_GPR_S_BASE + 0x04,
+		      BIT(30)); /* MMPCIE_GPR_MSI_TRANS_CTL2  */
+}

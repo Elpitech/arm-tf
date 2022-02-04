@@ -49,6 +49,12 @@ PLAT_BL_COMMON_SOURCES	+=	plat/baikal/common/spi_dw_boot.c
 else
 PLAT_BL_COMMON_SOURCES	+=	plat/baikal/common/spi_scp_boot.c
 endif
+ifeq ($(DP_ENABLE),1)
+$(eval $(call add_define,DP_ENABLE))
+endif
+ifeq ($(EDP_ENABLE),1)
+$(eval $(call add_define,EDP_ENABLE))
+endif
 else ifeq ($(BAIKAL_TARGET),qemu-m)
 $(eval $(call add_define,BAIKAL_QEMU))
 PLAT_BL_COMMON_SOURCES	+=	plat/baikal/common/spi_dw_boot.c

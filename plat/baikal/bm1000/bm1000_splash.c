@@ -15,6 +15,7 @@
 #include <baikal_def.h>
 #include <bm1000_private.h>
 #include <dw_gpio.h>
+#include <dw_i2c.h>
 #include <platform_def.h>
 
 #include "bm1000_hdmi.h"
@@ -22,12 +23,14 @@
 #include "bm1000_vdu.h"
 
 #define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0x7f  /* 50% duty cycle */
-#define BAIKAL_VDU_DEFAULT_PWM_FREQ 	10000
+#define BAIKAL_VDU_DEFAULT_PWM_FREQ 	100000
 
 modeline_t default_lvds_video_mode = {148500000, 2, BAIKAL_LVDS_VESA_24,
 	1920, 88, 44, 148, 1080, 4, 5, 36};
 modeline_t *lvds_video_mode = &default_lvds_video_mode;
 modeline_t hdmi_video_mode = {25250000, 0, 0, 640, 16, 96, 48, 480, 10, 2, 33};
+
+#ifdef IMAGE_BL31
 int gpio_pin = -1;
 int gpio_polarity = -1;
 
@@ -97,6 +100,16 @@ int fdt_get_panel(modeline_t *modeline)
 				return -1;
 			}
 
+			prop = fdt_getprop(fdt, node, "enable-gpios", &plen);
+			if (prop && plen == 3 * sizeof(*prop)) {
+				gpio_pin = fdt32_to_cpu(*(prop + 1));
+				if (!fdt32_to_cpu(*(prop + 2)))
+					gpio_polarity = 1;
+				else
+					gpio_polarity = 0;
+				gpio_found = 1;
+			}
+
 			node = fdt_subnode_offset(fdt, node, "panel-timing");
 			if (node < 0) {
 				WARN("panel-lvds: no panel-timing subnode\n");
@@ -149,6 +162,158 @@ int fdt_get_panel(modeline_t *modeline)
 		}
 	}
 }
+
+#ifdef EDP_ENABLE
+#define EDP_I2C_BUS	MMAVLSP_I2C2_BASE
+#define EDP_ADDR	0x70
+
+static uint8_t regs_a[][2] = {
+	{0x09, 0x01},
+	{0x4b, 0x01},
+	{0x0c, 0x00}
+};
+static uint8_t regs_b[][2] = {
+	{0x35, 0x41},
+	{0x30, 0xb0},
+	{0x30, 0xb1},
+	{0x00, 0x0b},
+	{0x09, 0x00}
+};
+
+static void edp_bridge_setup(modeline_t *mode)
+{
+	uint8_t mode_regs[17];
+	int i, val, ret;
+	mode_regs[0] = 0x10;//start addr
+	val = mode->hact + mode->hsync + mode->hbp + mode->hfp;
+	mode_regs[1] = (val >> 8) & 0xff;
+	mode_regs[2] = val & 0xff;
+	val = mode->hsync + mode->hbp;
+	mode_regs[3] = (val >> 8) & 0xff;
+	mode_regs[4] = val & 0xff;
+	mode_regs[5] = (mode->hact >> 8) & 0xff;
+	mode_regs[6] = mode->hact & 0xff;
+
+	val = mode->vact + mode->vsync + mode->vbp + mode->vfp;
+	mode_regs[7] = (val >> 8) & 0xff;
+	mode_regs[8] = val & 0xff;
+	val = mode->vsync + mode->vbp;
+	mode_regs[9] = (val >> 8) & 0xff;
+	mode_regs[10] = val & 0xff;
+	mode_regs[11] = (mode->vact >> 8) & 0xff;
+	mode_regs[12] = mode->vact & 0xff;
+	mode_regs[13] = 0x80;
+	mode_regs[14] = mode->hsync & 0xff;
+	mode_regs[15] = 0x80;
+	mode_regs[16] = mode->vsync & 0xff;
+
+	for (i = 0; i < 3; i++)
+		i2c_txrx(EDP_I2C_BUS, EDP_ADDR, regs_a[i], 2, NULL, 0);
+	ret = i2c_txrx(EDP_I2C_BUS, EDP_ADDR, mode_regs, 17, NULL, 0);
+	if (ret < 0)
+		ERROR("EDP write %d\n", ret);
+	for (i = 0; i < 5; i++)
+		i2c_txrx(EDP_I2C_BUS, EDP_ADDR, regs_b[i], 2, NULL, 0);
+}
+#endif
+
+#ifdef DP_ENABLE
+#define DP_I2C_BUS	MMAVLSP_I2C2_BASE
+#define DP_I2C_ADDR	0x73
+
+int dp_bridge_setup()
+{
+	void *fdt = (void *)(uintptr_t)PLAT_BAIKAL_SEC_DTB_BASE;
+	int node = 0;
+	const fdt32_t *prop;
+	uint16_t reg_ctrl = 0;
+	unsigned char buf[4];
+	int reset_pin, reset_polarity;
+	int cnt;
+	int plen;
+	int pval;
+	int ret;
+
+	ret = fdt_open_into(fdt, fdt, PLAT_BAIKAL_DTB_MAX_SIZE);
+	if (ret < 0) {
+		ERROR("Invalid Device Tree at %p: error %d\n", fdt, ret);
+		return -1;
+	}
+
+	while (1) {
+		node = fdt_next_node(fdt, node, NULL);
+		if (node < 0) {
+			return -1;
+		}
+
+		if (!fdt_node_check_compatible(fdt, node, "megachips,stdp4028-lvds-dp")) {
+			prop = fdt_getprop(fdt, node, "channels", &plen);
+			if (!prop) {
+				WARN("dp-bridge: missing channels property\n");
+				return -1;
+			}
+			pval = fdt32_to_cpu(prop[0]);
+			if (pval == 4)
+				reg_ctrl = 2;
+			else if (pval == 2)
+				reg_ctrl = 1;
+			prop = fdt_getprop(fdt, node, "chan-cfg", &plen);
+			if (!prop) {
+				WARN("dp-bridge: missing chan-cfg property\n");
+				return -1;
+			}
+			pval = fdt32_to_cpu(prop[0]);
+			reg_ctrl |= (pval & 0xf) << 2;
+
+			prop = fdt_getprop(fdt, node, "reset-gpios", &plen);
+			if (prop && (plen == sizeof(fdt32_t) * 3)) {
+				INFO("resetting dp-bridge...\n");
+				reset_pin = fdt32_to_cpu(prop[1]);
+				reset_polarity = !(fdt32_to_cpu(prop[2]) & 1);
+				gpio_out_set(MMAVLSP_GPIO32_BASE, reset_pin);
+				gpio_dir_set(MMAVLSP_GPIO32_BASE, reset_pin);
+				if (reset_polarity) {
+					mdelay(10);
+					gpio_out_rst(MMAVLSP_GPIO32_BASE, reset_pin);
+				}
+				mdelay(50);
+			}
+
+			buf[0] = 0;
+			for (cnt = 0; cnt < 10; cnt++) {
+				ret = i2c_txrx(DP_I2C_BUS, DP_I2C_ADDR, buf, 1, buf + 2, 2);
+				if (ret < 0)
+					mdelay(100);
+				else
+					break;
+			}
+			INFO("Bridge id - %02x%02x (ret %d, cnt %d)\n", buf[2], buf[3], ret, cnt);
+			if (ret < 0) {
+				WARN("Can't read bridge id\n");
+			} else if (buf[2] != 0x93 || buf[3] != 0x11) {
+				WARN("Wrong bridge id - %02x%02x\n", buf[2], buf[3]);
+			} else {
+				buf[0] = 0xc; /* lvds control reg */
+				buf[1] = reg_ctrl >> 8;
+				buf[2] = reg_ctrl;
+				ret = i2c_txrx(DP_I2C_BUS, DP_I2C_ADDR, buf, 3, NULL, 0);
+				if (ret < 0)
+					WARN("Can't set control reg\n");
+				buf[0] = 0xb; /* lvds format reg */
+				buf[1] = 0;
+				buf[2] = 0x15; /* 8 bit non-JEIDA */
+				ret = i2c_txrx(DP_I2C_BUS, DP_I2C_ADDR, buf, 3, NULL, 0);
+				if (ret < 0)
+					WARN("Can't set format reg\n");
+				return ret;
+			}
+		}
+	}
+	return -1;
+}
+#endif /* DP_ENABLE */
+
+#endif /* IMAGE_BL31 */
 
 void wait_for_vblank(uint64_t vdu_base)
 {
@@ -261,6 +426,11 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 		/* Release PWM Clock Domain Reset, enable clocking */
 		mmio_write_32(vdu_base + BAIKAL_VDU_REG_PWMFR, pwmfr | BAIKAL_VDU_PWMFR_PWMPCR | BAIKAL_VDU_PWMFR_PWMFCE);
 
+#ifdef IMAGE_BL31
+#ifdef EDP_ENABLE
+		edp_bridge_setup(mode);
+		mdelay(100);
+#endif
 		/* Enable backlight */
 		if (gpio_polarity != -1) {
 			if (gpio_polarity) {
@@ -270,6 +440,10 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 			}
 			gpio_dir_set(MMAVLSP_GPIO32_BASE, gpio_pin);
 		}
+#ifdef DP_ENABLE
+		dp_bridge_setup();
+#endif
+#endif /* IMAGE_BL31 */
 
 	} else { /* HDMI VDU */
 		ctl |= BAIKAL_VDU_CR1_OPS_LCD24;

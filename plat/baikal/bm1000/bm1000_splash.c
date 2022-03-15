@@ -202,9 +202,9 @@ static void edp_bridge_setup(modeline_t *mode)
 	mode_regs[10] = val & 0xff;
 	mode_regs[11] = (mode->vact >> 8) & 0xff;
 	mode_regs[12] = mode->vact & 0xff;
-	mode_regs[13] = 0x80;
+	mode_regs[13] = 0x00;
 	mode_regs[14] = mode->hsync & 0xff;
-	mode_regs[15] = 0x80;
+	mode_regs[15] = 0x00;
 	mode_regs[16] = mode->vsync & 0xff;
 
 	for (i = 0; i < 3; i++)

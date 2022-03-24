@@ -751,12 +751,13 @@ int phy_config_content(struct phy_content *phy,
 }
 
 int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
-		      struct ddr_configuration *data)
+		      struct ddr_configuration *data,
+		      struct ddr_local_conf *conf)
 {
 	uint32_t tmp;
 
 	/* set some values that happened to be constant in our init routine */
-	data->dimms = 1;
+	data->dimms = conf->dimms;
 
 	/*
 	 * The SPD spec has not the burst length byte, but DDR4 spec has
@@ -839,6 +840,8 @@ int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
 	/* Get Cycle Time (tCK) */
 	data->tCK = SPD_TO_PS(spd->tck_min, spd->fine_tck_min);
 	data->clock_mhz = 1000000 / data->tCK;
+	if (conf->freq)
+		data->clock_mhz = conf->freq / 2;
 	if (data->clock_mhz > 1333) {
 		data->clock_mhz = 1333;
 	}
@@ -870,6 +873,8 @@ int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
 
 	tmp = SPD_TO_PS(spd->taa_min, spd->fine_taa_min);
 	tmp = CLOCK_PS(tmp);
+	if (conf->cl)
+		tmp += conf->cl;
 	while (tmp < 64 && (lat_mask & (1ULL << tmp)) == 0) {
 		++tmp;
 	}
@@ -950,11 +955,18 @@ int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
 	 *
 	 * Note: we set AL to (CL-1) like S.Hudchenko example
 	 */
+	if (conf->al) {
+		if (conf->al == 1)
+			data->AL = 0;
+		else
+			data->AL = data->CL - (conf->al - 1);
+	} else {
 #if CONFIG_AL == 0
-	data->AL = 0;
+		data->AL = 0;
 #else
-	data->AL = data->CL - CONFIG_AL;
+		data->AL = data->CL - CONFIG_AL;
 #endif
+	}
 
 	/* Compute Read Latency (RL) */
 	data->RL = data->AL + data->CL + data->PL;

@@ -36,7 +36,7 @@ CASSERT(sizeof(trusted_mailbox) == PLAT_BAIKAL_TRUSTED_MAILBOX_SIZE,
 static meminfo_t bl2_tzram_layout;
 
 /* Allocate space in static memory for DDR SPD content */
-const uint8_t spd_bytes[1024];
+uint8_t spd_bytes[1024] __attribute__((aligned(4)));
 
 /*
  * Cannot use default weak implementation in bl1_main.c because BL1 RW and BL2

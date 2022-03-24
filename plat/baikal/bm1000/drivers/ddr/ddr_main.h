@@ -106,6 +106,40 @@ struct ddr_configuration {
 	uint32_t PHY_ODT;
 };
 
+/*
+ * DDR fine tune config
+ *
+ * For the most fields below zero (0) means the default value.
+ * If 0 is a legal value for the parameter then the field is incremented by 1
+ * to distinguish configured zero setting from the default one.
+ */
+
+struct ddr_local_conf {
+	uint8_t 	magic[4];
+#define ELP_DDR_CONF_MAGIC	{'E', 'L', 'P', '0' + BOARD_VER}
+	uint16_t	freq; /* 0 - default */
+	uint8_t		dimms; /* number of DIMMS the config is for */
+	uint8_t		cl; /* CAS Latency. 0 - default, 1 - increase by 1 */
+	uint8_t		al; /* incremented */
+	uint8_t		rtt_wr;
+	uint8_t		rtt_nom;
+	uint8_t		rtt_park;
+	uint8_t		odi;
+	uint8_t		phy_odt;
+	uint8_t		phy_odi_pu;
+	uint16_t	crc;
+};
+
+/*
+ * DIMM presence config
+ */
+#define DIMM0_PRESENT	(1 << 0)
+#define DIMM1_PRESENT	(1 << 1)	/* second DIMM in channel 0 */
+#define DIMM2_PRESENT	(1 << 2)	/* channel 1 */
+#define DIMM3_PRESENT	(1 << 3)	/* second DIMM in channel 1 */
+
+int ddr_conf(struct ddr_local_conf *conf0, struct ddr_local_conf *congf2, unsigned dimm_cfg);
+
 int dram_init(void);
 int ddr_init(int port, bool dual_mode, struct ddr_configuration *data);
 int ddr_lcru_initport(int port, uint32_t clock_mhz);

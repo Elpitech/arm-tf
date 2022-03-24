@@ -37,12 +37,13 @@ static void tzc_set_transparent(const unsigned conf)
 	}
 }
 
-static int ddr_port_init(int port, const struct ddr4_spd_eeprom *spd, bool dual_mode, bool double_dimm)
+static int ddr_port_init(int port, const struct ddr4_spd_eeprom *spd,
+			 struct ddr_local_conf *cfg, bool dual_mode)
 {
 	int ret;
 	struct ddr_configuration data = {0};
 
-	ret = ddr_config_by_spd(spd, &data);
+	ret = ddr_config_by_spd(spd, &data, cfg);
 	if (ret) {
 		goto error;
 	}
@@ -53,9 +54,7 @@ static int ddr_port_init(int port, const struct ddr4_spd_eeprom *spd, bool dual_
 		data.single_ddr = 1;
 	}
 
-	if (double_dimm) {
-		data.dimms = 2;
-	}
+	data.dimms = cfg->dimms;
 
 #if !ECC_ENABLE
 	data.ecc_on = false;
@@ -67,6 +66,19 @@ static int ddr_port_init(int port, const struct ddr4_spd_eeprom *spd, bool dual_
 
 	ddr_odt_configuration(port, ((uint16_t)spd->crc[1] << 8) + spd->crc[0],
 			      &data);
+
+	if (cfg->rtt_wr)
+		data.RTT_WR = cfg->rtt_wr - 1;
+	if (cfg->rtt_nom)
+		data.RTT_NOM = cfg->rtt_nom - 1;
+	if (cfg->rtt_park)
+		data.RTT_PARK = cfg->rtt_park - 1;
+	if (cfg->phy_odt)
+		data.PHY_ODT = cfg->phy_odt - 1;
+	if (cfg->phy_odi_pu)
+		data.PHY_ODI_PU = cfg->phy_odi_pu - 1;
+	if (cfg->odi)
+		data.DIC = (cfg->odi - 1) * 2; // only 0 and 2 valid
 
 	ret = ddr_lcru_initport(port, data.clock_mhz);
 	if (ret) {
@@ -98,16 +110,18 @@ int dram_init(void)
 	int ret = 0;
 	unsigned conf = 0;
 	const struct ddr4_spd_eeprom *spd[4];
+	struct ddr_local_conf *conf0 = NULL, *conf1 = NULL;
 
 	spd[0] = ddr_read_spd(0);
 	if (spd[0] != NULL) {
 		if (spd[0]->mem_type == SPD_MEMTYPE_DDR4) {
 			INFO("DIMM0: DDR4 SDRAM is detected\n");
-			conf |= 0x1;
+			conf |= DIMM0_PRESENT;
+			conf0 = (struct ddr_local_conf *)((uint8_t *)spd[0] + 384); /* SPD user area */
 			spd[1] = ddr_read_spd(1);
 			if (spd[1] != NULL && !memcmp(spd[0], spd[1], 128)) {
 				INFO("DIMM0-1 is present\n");
-				conf |= 0x2;
+				conf |= DIMM1_PRESENT;
 			}
 		} else {
 			ERROR("DIMM0: unsupported SDRAM type\n");
@@ -118,19 +132,22 @@ int dram_init(void)
 	if (spd[2] != NULL) {
 		if (spd[2]->mem_type == SPD_MEMTYPE_DDR4) {
 			INFO("DIMM1: DDR4 SDRAM is detected\n");
-			conf |= 0x4;
+			conf |= DIMM2_PRESENT;
+			conf1 = (struct ddr_local_conf *)((uint8_t *)spd[2] + 384); /* SPD user area */
 			spd[3] = ddr_read_spd(3);
 			if (spd[3] != NULL && !memcmp(spd[2], spd[3], 128)) {
 				INFO("DIMM1-1 is present\n");
-				conf |= 0x8;
+				conf |= DIMM3_PRESENT;
 			}
 		} else {
 			ERROR("DIMM1: unsupported SDRAM type\n");
 		}
 	}
 
-	if (conf & 0x1) {
-		ret = ddr_port_init(0, spd[0], (conf & 0x4), (conf & 0x3) == 0x3);
+	ddr_conf(conf0, conf1, conf);
+
+	if (conf & DIMM0_PRESENT) {
+		ret = ddr_port_init(0, spd[0], conf0, (conf & DIMM2_PRESENT));
 	} else {
 		ddr_lcru_disable(0);
 	}
@@ -139,8 +156,8 @@ int dram_init(void)
 		goto error;
 	}
 
-	if (conf & 0x4) {
-		ret = ddr_port_init(1, spd[2], (conf & 0x1), (conf & 0xc) == 0xc);
+	if (conf & DIMM2_PRESENT) {
+		ret = ddr_port_init(1, spd[2], conf1, (conf & DIMM0_PRESENT));
 		if ((ret < 0) & (conf & 0x1)) {
 			ddr_lcru_disable(0);
 			goto error;

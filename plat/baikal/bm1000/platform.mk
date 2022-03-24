@@ -81,6 +81,7 @@ BL1_SOURCES		+=	drivers/arm/ccn/ccn.c				\
 				plat/baikal/bm1000/drivers/ddr/ddr_lcru.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_main.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_master.c	\
+				plat/baikal/bm1000/drivers/ddr/ddr_cfg.c	\
 				plat/baikal/common/baikal_bl1_stack.c		\
 				plat/baikal/common/baikal_common.c		\
 				plat/baikal/common/baikal_io_storage.c		\

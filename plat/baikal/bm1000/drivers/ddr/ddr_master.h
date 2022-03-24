@@ -126,6 +126,7 @@ int phy_config_content(struct phy_content *phy,
 int ddrc_config_content(struct ctl_content *ddrc,
 			const struct ddr_configuration *data);
 int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
-		      struct ddr_configuration *data);
+		      struct ddr_configuration *data,
+		      struct ddr_local_conf *cfg);
 
 #endif /* DDR_MASTER_H */

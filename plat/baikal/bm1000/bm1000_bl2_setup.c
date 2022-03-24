@@ -79,12 +79,13 @@ void bl2_platform_setup(void)
 				if (dimm_capacity > 0) {
 					INFO("DIMM%u: capacity is %lld MiB\n", dimm_idx, dimm_capacity / (1024 * 1024));
 					total_capacity += dimm_capacity;
+					dt_enable_mc_node(fdt, dimm_idx == 0 ?
+						MMDDR0_CTRL_BASE : MMDDR1_CTRL_BASE);
 				} else {
 					ERROR("DIMM%u: capacity is unidentified\n", dimm_idx);
 				}
 			}
 
-			dt_enable_mc_node(fdt, dimm_idx == 0 ? MMDDR0_CTRL_BASE : MMDDR1_CTRL_BASE);
 		}
 
 		if (total_capacity > 0) {

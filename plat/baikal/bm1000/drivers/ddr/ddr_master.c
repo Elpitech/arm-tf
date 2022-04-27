@@ -842,11 +842,8 @@ int ddr_config_by_spd(const struct ddr4_spd_eeprom *spd,
 	data->clock_mhz = 1000000 / data->tCK;
 	if (conf->freq)
 		data->clock_mhz = conf->freq / 2;
-	if (data->clock_mhz > 1333) {
-		data->clock_mhz = 1333;
-	}
 #ifdef BAIKAL_DDR_CUSTOM_CLOCK_FREQ
-	if (data->clock_mhz > BAIKAL_DDR_CUSTOM_CLOCK_FREQ) {
+	else if (data->clock_mhz > BAIKAL_DDR_CUSTOM_CLOCK_FREQ) {
 		data->clock_mhz = BAIKAL_DDR_CUSTOM_CLOCK_FREQ;
 	}
 #endif

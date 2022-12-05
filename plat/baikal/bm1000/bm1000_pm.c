@@ -24,6 +24,15 @@
 #define MBM_BMC_REG_PWROFF_RQ		0x05
 #define MBM_BMC_REG_PWROFF_RQ_OFF	0x01
 #define MBM_BMC_REG_PWROFF_RQ_RESET	0x02
+#elif defined(ELPITECH)
+#include <dw_gpio.h>
+#if BOARD_VER == 5
+#define BM_RESET_PIN	17
+#define BM_POWER_PIN	16
+#else
+#define BM_RESET_PIN	9
+#define BM_POWER_PIN	10
+#endif
 #endif
 #include <platform_def.h>
 
@@ -236,6 +245,13 @@ static void __dead2 bm1000_system_off(void)
 		 MBM_BMC_I2C_ADDR, &offreq, sizeof(offreq), NULL, 0);
 
 	mdelay(4000);
+#elif defined(ELPITECH)
+	gpio_out_rst(MMAVLSP_GPIO32_BASE, BM_POWER_PIN);
+	gpio_dir_set(MMAVLSP_GPIO32_BASE, BM_POWER_PIN);
+	mdelay(50);
+	gpio_out_rst(MMAVLSP_GPIO32_BASE, BM_RESET_PIN);
+	gpio_dir_set(MMAVLSP_GPIO32_BASE, BM_RESET_PIN);
+	mdelay(4000);
 #endif
 	ERROR("%s: operation not supported\n", __func__);
 	for (;;) {
@@ -256,6 +272,10 @@ static void __dead2 bm1000_system_reset(void)
 	i2c_txrx(MBM_BMC_I2C_BUS,
 		 MBM_BMC_I2C_ADDR, &rstreq, sizeof(rstreq), NULL, 0);
 
+	mdelay(4000);
+#elif defined(ELPITECH)
+	gpio_out_rst(MMAVLSP_GPIO32_BASE, BM_RESET_PIN);
+	gpio_dir_set(MMAVLSP_GPIO32_BASE, BM_RESET_PIN);
 	mdelay(4000);
 #endif
 	ERROR("%s: operation not supported\n", __func__);

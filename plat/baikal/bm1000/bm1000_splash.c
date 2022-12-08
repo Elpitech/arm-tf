@@ -16,14 +16,15 @@
 #include <baikal_fdt.h>
 #include <bm1000_private.h>
 #include <dw_gpio.h>
+#include <dw_i2c.h>
 #include <platform_def.h>
 
 #include "bm1000_hdmi.h"
 #include "bm1000_splash.h"
 #include "bm1000_vdu.h"
 
-#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0x7f  /* 50% duty cycle */
-#define BAIKAL_VDU_DEFAULT_PWM_FREQ 	10000
+#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0xbf  /* 75% duty cycle */
+#define BAIKAL_VDU_DEFAULT_PWM_FREQ 	25000
 
 modeline_t lvds_video_mode = {148500000, 2, BAIKAL_LVDS_VESA_24,
 			      1920, 88, 44, 148,
@@ -259,7 +260,7 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 		/* Hold PWM Clock Domain Reset, disable clocking */
 		mmio_write_32(vdu_base + BAIKAL_VDU_REG_PWMFR, 0);
 
-		pwmfr = BAIKAL_VDU_PWMFR_PWMFCD(mode->clock / BAIKAL_VDU_DEFAULT_PWM_FREQ - 1) | BAIKAL_VDU_PWMFR_PWMFCI;
+		pwmfr = BAIKAL_VDU_PWMFR_PWMFCD(mode->clock / BAIKAL_VDU_DEFAULT_PWM_FREQ / 256 - 1) | BAIKAL_VDU_PWMFR_PWMFCI;
 		mmio_write_32(vdu_base + BAIKAL_VDU_REG_PWMFR, pwmfr);
 
 		mmio_write_32(vdu_base + BAIKAL_VDU_REG_PWMDCR, BAIKAL_VDU_DEFAULT_BRIGHTNESS);

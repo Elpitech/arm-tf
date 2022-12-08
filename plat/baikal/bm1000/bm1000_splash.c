@@ -30,6 +30,22 @@ modeline_t lvds_video_mode = {148500000, 2, BAIKAL_LVDS_VESA_24,
 			      1920, 88, 44, 148,
 			      1080, 4, 5, 36};
 modeline_t hdmi_video_mode = {25250000, 0, 0, 640, 16, 96, 48, 480, 10, 2, 33};
+
+#ifdef IMAGE_BL31
+uint32_t fdt_get_parent(const void *fdt, uint32_t node)
+{
+	int parent = 0, child;
+	while(1) {
+		parent = fdt_next_node(fdt, parent, NULL);
+		if (parent <= 0)
+			return parent;
+		fdt_for_each_subnode(child, fdt, parent) {
+			if (child == node)
+				return parent;
+		}
+	}
+}
+
 int gpio_pin = -1;
 int gpio_polarity = -1;
 
@@ -51,16 +67,298 @@ int gpio_polarity = -1;
 		} \
 	} while (0)
 
+int fdt_get_timings(const void *fdt, uint32_t panel_node, modeline_t *modeline)
+{
+	int node;
+	const fdt32_t *prop;
+	int plen;
+
+	node = fdt_subnode_offset(fdt, panel_node, "panel-timing");
+	if (node < 0)
+		return -1;
+
+	fdt_get_panel_timing("clock-frequency", modeline->clock);
+	fdt_get_panel_timing("hactive", modeline->hact);
+	fdt_get_panel_timing("vactive", modeline->vact);
+	fdt_get_panel_timing("hsync-len", modeline->hsync);
+	fdt_get_panel_timing("hfront-porch", modeline->hfp);
+	fdt_get_panel_timing("hback-porch", modeline->hbp);
+	fdt_get_panel_timing("vsync-len", modeline->vsync);
+	fdt_get_panel_timing("vfront-porch", modeline->vfp);
+	fdt_get_panel_timing("vback-porch", modeline->vbp);
+
+	return 0;
+}
+
+uint32_t bridge_i2c_base, bridge_i2c_addr;
+static int (*bridge_post_setup)(void);
+
+static uint8_t edp_mode_regs[17];
+static uint8_t edp_regs_a[][2] = {
+	{0x09, 0x01},
+	{0x4b, 0x01},
+	{0x0c, 0x00}
+};
+static uint8_t edp_regs_b[][2] = {
+	{0x35, 0x41},
+	{0x30, 0xb0},
+	{0x30, 0xb1},
+	{0x00, 0x0b},
+	{0x09, 0x00}
+};
+
+static int edp_post_setup()
+{
+	int i, ret;
+	for (i = 0; i < 3; i++)
+		i2c_txrx(bridge_i2c_base, bridge_i2c_addr, edp_regs_a[i], 2, NULL, 0);
+	ret = i2c_txrx(bridge_i2c_base, bridge_i2c_addr, edp_mode_regs, 17, NULL, 0);
+	if (ret < 0)
+		ERROR("EDP write %d\n", ret);
+	for (i = 0; i < 5; i++)
+		i2c_txrx(bridge_i2c_base, bridge_i2c_addr, edp_regs_b[i], 2, NULL, 0);
+	mdelay(100);
+	return 0;
+}
+
+static int edp_setup(const void *fdt, uint32_t node, modeline_t *modeline)
+{
+	int parent, phandle;
+	const fdt32_t *prop;
+	int plen;
+	int val;
+
+	prop = fdt_getprop(fdt, node, "elpitech,edp-addr", &plen);
+	if (plen && plen == 2 * sizeof(*prop)) {
+		phandle = fdt32_to_cpu(prop[0]);
+		bridge_i2c_addr = fdt32_to_cpu(prop[1]);
+		parent = fdt_node_offset_by_phandle(fdt, phandle);
+		if (parent > 0) {
+			prop = fdt_getprop(fdt, parent, "reg", &plen);
+			if (plen >= 2 * sizeof(fdt32_t)) {
+				bridge_i2c_base = fdt32_to_cpu(prop[1]);
+				INFO("eDP at base %x, addr: %x\n",
+				     bridge_i2c_base, bridge_i2c_addr);
+			} else {
+				WARN("eDP parent %x has no or invalid reg property (len %d)\n",
+				     parent, plen);
+				return -1;
+			}
+		} else {
+			ERROR("No i2c bus for eDP found (phandle %x)\n", phandle);
+			return -1;
+		}
+	}
+	edp_mode_regs[0] = 0x10;//start addr
+	val = modeline->hact + modeline->hsync + modeline->hbp + modeline->hfp;
+	edp_mode_regs[1] = (val >> 8) & 0xff;
+	edp_mode_regs[2] = val & 0xff;
+	val = modeline->hsync + modeline->hbp;
+	edp_mode_regs[3] = (val >> 8) & 0xff;
+	edp_mode_regs[4] = val & 0xff;
+	edp_mode_regs[5] = (modeline->hact >> 8) & 0xff;
+	edp_mode_regs[6] = modeline->hact & 0xff;
+
+	val = modeline->vact + modeline->vsync + modeline->vbp + modeline->vfp;
+	edp_mode_regs[7] = (val >> 8) & 0xff;
+	edp_mode_regs[8] = val & 0xff;
+	val = modeline->vsync + modeline->vbp;
+	edp_mode_regs[9] = (val >> 8) & 0xff;
+	edp_mode_regs[10] = val & 0xff;
+	edp_mode_regs[11] = (modeline->vact >> 8) & 0xff;
+	edp_mode_regs[12] = modeline->vact & 0xff;
+	edp_mode_regs[13] = 0x00;
+	edp_mode_regs[14] = modeline->hsync & 0xff;
+	edp_mode_regs[15] = 0x00;
+	edp_mode_regs[16] = modeline->vsync & 0xff;
+
+	bridge_post_setup = edp_post_setup;
+
+	return 0;
+}
+
+static int panel_setup(const void *fdt, uint32_t node, modeline_t *modeline)
+{
+	int subnode, node_port;
+	const fdt32_t *prop;
+	int plen;
+
+	if (!fdt_device_is_enabled(fdt, node)) {
+		WARN("panel-lvds: disabled\n");
+		return -1;
+	}
+
+	if (fdt_get_timings(fdt, node, modeline))
+		modeline = &lvds_video_mode;
+
+	prop = fdt_getprop(fdt, node, "data-mapping", &plen);
+	if (!prop) {
+		WARN("panel-lvds: missing data-mapping property\n");
+		modeline->data_mapping = BAIKAL_LVDS_VESA_24;
+	} else if (fdt_stringlist_contains((void *)prop, plen, "jeida-18")) {
+		modeline->data_mapping = BAIKAL_LVDS_JEIDA_18;
+	} else if (fdt_stringlist_contains((void *)prop, plen, "vesa-24")) {
+		modeline->data_mapping = BAIKAL_LVDS_VESA_24;
+	} else {
+		WARN("panel-lvds: unsupported data mapping type\n");
+		modeline->data_mapping = BAIKAL_LVDS_VESA_24;
+	}
+
+	prop = fdt_getprop(fdt, node, "enable-gpios", &plen);
+	if (prop && plen == 3 * sizeof(*prop)) {
+		gpio_pin = fdt32_to_cpu(*(prop + 1));
+		if (!fdt32_to_cpu(*(prop + 2)))
+			gpio_polarity = 1;
+		else
+			gpio_polarity = 0;
+	}
+
+	node_port = fdt_subnode_offset(fdt, node, "port");
+	if (node_port < 0) {
+		WARN("panel-lvds: no port subnode\n");
+		return -1;
+	}
+
+	modeline->ports = 0;
+	fdt_for_each_subnode(subnode, fdt, node_port) {
+		if (!strncmp(fdt_get_name(fdt, subnode, NULL), "endpoint", strlen("endpoint"))) {
+			modeline->ports++;
+		}
+	}
+
+	if (modeline->ports == 0) {
+		WARN("panel-lvds: port subnode has no endpoints\n");
+		return -1;
+	}
+
+	prop = fdt_getprop(fdt, node, "elpitech,edp-addr", &plen);
+	if (plen)
+		edp_setup(fdt, node, modeline);
+
+	return 0;
+}
+
+static int stdp_setup(const void *fdt, uint32_t node, modeline_t *modeline)
+{
+	int parent;
+	const fdt32_t *prop;
+	int plen, pval;
+	uint16_t reg_ctrl = 0;
+	unsigned char buf[4];
+	int reset_pin, reset_polarity;
+	int cnt;
+	int ret;
+
+	modeline = &lvds_video_mode;
+
+	prop = fdt_getprop(fdt, node, "reg", &plen);
+	if (plen == sizeof(fdt32_t)) {
+		bridge_i2c_addr = fdt32_to_cpu(prop[0]);
+	} else {
+		ERROR("No stdp addr (len %d)\n", plen);
+		return -1;
+	}
+
+	parent = fdt_get_parent(fdt, node);
+	if (parent > 0) {
+		prop = fdt_getprop(fdt, parent, "reg", &plen);
+		if (plen >= 2 * sizeof(fdt32_t)) {
+			bridge_i2c_base = fdt32_to_cpu(prop[1]);
+		} else {
+			ERROR("parent %x has no reg property (len %d)\n", parent, plen);
+			return -1;
+		}
+	}
+	INFO("stdp at base %x, addr: %x\n", bridge_i2c_base, bridge_i2c_addr);
+
+	prop = fdt_getprop(fdt, node, "channels", &plen);
+	if (!prop) {
+		WARN("dp-bridge: missing channels property\n");
+		return -1;
+	}
+	pval = fdt32_to_cpu(prop[0]);
+	modeline->ports = pval;
+	if (pval == 4)
+		reg_ctrl = 2;
+	else if (pval == 2)
+		reg_ctrl = 1;
+	prop = fdt_getprop(fdt, node, "chan-cfg", &plen);
+	if (!prop) {
+		WARN("dp-bridge: missing chan-cfg property\n");
+		return -1;
+	}
+	pval = fdt32_to_cpu(prop[0]);
+	reg_ctrl |= (pval & 0xf) << 2;
+
+	prop = fdt_getprop(fdt, node, "reset-gpios", &plen);
+	if (prop && (plen == sizeof(fdt32_t) * 3)) {
+		INFO("resetting dp-bridge...\n");
+		reset_pin = fdt32_to_cpu(prop[1]);
+		reset_polarity = !(fdt32_to_cpu(prop[2]) & 1);
+		if (reset_polarity) {
+			gpio_out_set(MMAVLSP_GPIO32_BASE, reset_pin);
+		} else {
+			gpio_out_rst(MMAVLSP_GPIO32_BASE, reset_pin);
+		}
+		gpio_dir_set(MMAVLSP_GPIO32_BASE, reset_pin);
+		mdelay(10);
+		if (reset_polarity) {
+			gpio_out_rst(MMAVLSP_GPIO32_BASE, reset_pin);
+		} else {
+			gpio_out_set(MMAVLSP_GPIO32_BASE, reset_pin);
+		}
+		mdelay(50);
+	}
+
+	buf[0] = 0;
+	for (cnt = 0; cnt < 10; cnt++) {
+		ret = i2c_txrx(bridge_i2c_base, bridge_i2c_addr, buf, 1, buf + 2, 2);
+		if (ret < 0)
+			mdelay(100);
+		else
+			break;
+	}
+	INFO("Bridge id - %02x%02x (ret %d, cnt %d)\n", buf[2], buf[3], ret, cnt);
+	if (ret < 0) {
+		WARN("Can't read bridge id\n");
+	} else if (buf[2] != 0x93 || buf[3] != 0x11) {
+		WARN("Wrong bridge id - %02x%02x\n", buf[2], buf[3]);
+	} else {
+		buf[0] = 0xc; /* lvds control reg */
+		buf[1] = reg_ctrl >> 8;
+		buf[2] = reg_ctrl;
+		ret = i2c_txrx(bridge_i2c_base, bridge_i2c_addr, buf, 3, NULL, 0);
+		if (ret < 0)
+			WARN("Can't set control reg\n");
+		buf[0] = 0xb; /* lvds format reg */
+		buf[1] = 0;
+		buf[2] = 0x15; /* 8 bit non-JEIDA */
+		ret = i2c_txrx(bridge_i2c_base, bridge_i2c_addr, buf, 3, NULL, 0);
+		if (ret < 0)
+			WARN("Can't set format reg\n");
+		return ret;
+	}
+
+	return -1;
+}
+
+const struct lvds_devices {
+	const char *compatible;
+	int (*setup)(const void *fdt, uint32_t node, modeline_t *modeline);
+} lvds_list[] = {
+	{ "panel-lvds", panel_setup },
+	{ "megachips,stdp4028-lvds-dp", stdp_setup },
+	{ }
+};
+
 int fdt_get_panel(modeline_t *modeline)
 {
 	void *fdt = (void *)(uintptr_t)BAIKAL_SEC_DTB_BASE;
-	int panel_found = 0;
-	int gpio_found = 0;
-	int node = 0;
+	int node = 0, subnode, remote_node;
 	const fdt32_t *prop;
-	int node_panel;
-	int node_port;
-	int plen;
+	const char *str_prop;
+	uint32_t phandle;
+	const struct lvds_devices *devp;
 	int ret;
 
 	ret = fdt_open_into(fdt, fdt, BAIKAL_DTB_MAX_SIZE);
@@ -70,92 +368,58 @@ int fdt_get_panel(modeline_t *modeline)
 	}
 
 	while (1) {
-		if (panel_found && gpio_found) {
-			return 0;
-		}
 		node = fdt_next_node(fdt, node, NULL);
-		if (node < 0) {
-			if (panel_found) {
-				return 0;
-			} else {
-				return -1;
-			}
-		}
-
-		if (!fdt_node_check_compatible(fdt, node, "panel-lvds")) {
-			if (!fdt_device_is_enabled(fdt, node)) {
-				WARN("panel-lvds: disabled\n");
-				return -1;
-			}
-
-			node_panel = node;
-			prop = fdt_getprop(fdt, node, "data-mapping", &plen);
-			if (!prop) {
-				WARN("panel-lvds: missing data-mapping property\n");
-				return -1;
-			}
-
-			if (fdt_stringlist_contains((void *)prop, plen, "jeida-18")) {
-				modeline->data_mapping = BAIKAL_LVDS_JEIDA_18;
-			} else if (fdt_stringlist_contains((void *)prop, plen, "vesa-24")) {
-				modeline->data_mapping = BAIKAL_LVDS_VESA_24;
-			} else {
-				WARN("panel-lvds: unsupported data mapping type\n");
-				return -1;
-			}
-
-			node = fdt_subnode_offset(fdt, node, "panel-timing");
-			if (node < 0) {
-				WARN("panel-lvds: no panel-timing subnode\n");
-				return -1;
-			}
-
-			fdt_get_panel_timing("clock-frequency", modeline->clock);
-			fdt_get_panel_timing("hactive", modeline->hact);
-			fdt_get_panel_timing("vactive", modeline->vact);
-			fdt_get_panel_timing("hsync-len", modeline->hsync);
-			fdt_get_panel_timing("hfront-porch", modeline->hfp);
-			fdt_get_panel_timing("hback-porch", modeline->hbp);
-			fdt_get_panel_timing("vsync-len", modeline->vsync);
-			fdt_get_panel_timing("vfront-porch", modeline->vfp);
-			fdt_get_panel_timing("vback-porch", modeline->vbp);
-
-			node_port = fdt_subnode_offset(fdt, node_panel, "port");
-			if (node_port < 0) {
-				WARN("panel-lvds: no port subnode\n");
-				return -1;
-			}
-
-			modeline->ports = 0;
-			fdt_for_each_subnode(node, fdt, node_port) {
-				if (!strncmp(fdt_get_name(fdt, node, NULL), "endpoint", strlen("endpoint"))) {
-					modeline->ports++;
-				}
-			}
-
-			if (modeline->ports == 0) {
-				WARN("panel-lvds: port subnode has no endpoints\n");
-				return -1;
-			}
-
-			panel_found = 1;
-			node = node_panel;
+		if (node < 0)
+			return node;
+		if (!fdt_node_check_compatible(fdt, node, "baikal,vdu"))
 			continue;
+		if (!fdt_device_is_enabled(fdt, node))
+			continue;
+		str_prop = fdt_getprop(fdt, node, "lvds-out", NULL);
+		if (!str_prop)
+			continue;
+		subnode = fdt_subnode_offset(fdt, node, "port");
+		if (subnode < 0)
+			continue;
+		subnode = fdt_first_subnode(fdt, subnode);
+		if (subnode < 0)
+			continue;
+		prop = fdt_getprop(fdt, subnode, "remote-endpoint", NULL);
+		if (!prop)
+			continue;
+		phandle = fdt32_to_cpu(prop[0]);
+		/* get the remote endpoint node */
+		remote_node = fdt_node_offset_by_phandle(fdt, phandle);
+		if (remote_node < 0)
+			continue;
+		/* get the remote port node */
+		remote_node = fdt_get_parent(fdt, remote_node);
+		if (remote_node < 0)
+			continue;
+		/* get the remote device node */
+		remote_node = fdt_get_parent(fdt, remote_node);
+		if (remote_node < 0)
+			continue;
+		str_prop = fdt_getprop(fdt, remote_node, "compatible", NULL);
+		if (!str_prop) {
+			str_prop = fdt_getprop(fdt, remote_node, "compatible", NULL);
+			if (!str_prop)
+				continue;
 		}
-
-		if (!fdt_node_check_compatible(fdt, node, "baikal,vdu")) {
-			prop = fdt_getprop(fdt, node, "enable-gpios", &plen);
-			if (prop && plen == 3 * sizeof(*prop)) {
-				gpio_pin = fdt32_to_cpu(*(prop + 1));
-				if (!fdt32_to_cpu(*(prop + 2)))
-					gpio_polarity = 1;
-				else
-					gpio_polarity = 0;
-				gpio_found = 1;
+		INFO("vdu_vlds remote-node compatible: %s\n", str_prop);
+		ret = -1;
+		for (devp = lvds_list; devp->compatible; devp++) {
+			if (!strcmp(str_prop, devp->compatible)) {
+				ret = devp->setup(fdt, remote_node, modeline);
+				break;
 			}
 		}
+		return ret;
 	}
+	return -1;
 }
+
+#endif /* IMAGE_BL31 */
 
 void wait_for_vblank(uint64_t vdu_base)
 {
@@ -268,6 +532,9 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 		/* Release PWM Clock Domain Reset, enable clocking */
 		mmio_write_32(vdu_base + BAIKAL_VDU_REG_PWMFR, pwmfr | BAIKAL_VDU_PWMFR_PWMPCR | BAIKAL_VDU_PWMFR_PWMFCE);
 
+#ifdef IMAGE_BL31
+		if (bridge_post_setup)
+			bridge_post_setup();
 		/* Enable backlight */
 		if (gpio_polarity != -1) {
 			if (gpio_polarity) {
@@ -277,7 +544,7 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, modeline_t *mode)
 			}
 			gpio_dir_set(MMAVLSP_GPIO32_BASE, gpio_pin);
 		}
-
+#endif
 	} else { /* HDMI VDU */
 		ctl |= BAIKAL_VDU_CR1_OPS_LCD24;
 	}

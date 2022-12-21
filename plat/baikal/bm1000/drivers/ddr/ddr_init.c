@@ -147,6 +147,8 @@ static void baikal_ddrphy_set_registers(const unsigned port, struct phy_content 
 	BM_DDR_PUB_WRITE(port, DDR_PUB_DTCR1, phy->DTCR1_);
 	BM_DDR_PUB_WRITE(port, DDR_PUB_DSGCR, phy->DSGCR_);
 	BM_DDR_PUB_WRITE(port, DDR_PUB_ZQCR, phy->ZQCR_);
+	BM_DDR_PUB_WRITE(port, DDR_PUB_ZQ0PR, phy->ZQ0PR_);
+	BM_DDR_PUB_WRITE(port, DDR_PUB_ZQ1PR, phy->ZQ1PR_);
 
 	if (phy->dbus_half) {
 		uint32_t DXnGCR0_val = BM_DDR_PUB_READ(port, DDR_PUB_DX4GCR0);
@@ -231,6 +233,10 @@ static int baikal_ddrphy_pir_training(const unsigned port, uint32_t mode)
 	for (timeout = timeout_init_us(10000);;) {
 		const uint32_t reg = BM_DDR_PUB_READ(port, DDR_PUB_PGSR0);
 		if (reg & 0x1) {
+			if (reg & 0x0ff80000) {
+				ret = reg;
+				ERROR("%s: completed with errors, 0x%x\n", __func__, ret);
+			}
 			break;
 		} else if (timeout_elapsed(timeout)) {
 			ret = reg;
@@ -391,6 +397,8 @@ int ddr_init(int port, bool dual_mode, struct ddr_configuration *info)
 	int ret = 0;
 	struct ctl_content ddrc = {0};
 	struct phy_content phy = {0};
+	unsigned int i;
+	uint32_t reg;
 
 	ddrc_set_default_vals(&ddrc);
 	phy_set_default_vals(&phy);
@@ -419,6 +427,16 @@ int ddr_init(int port, bool dual_mode, struct ddr_configuration *info)
 
 	baikal_ddrphy_set_registers(port, &phy);
 
+	/* set ODTCRn according to ODTMAP */
+	for (i = 0; i < 4; i++) {
+		reg = (ddrc.ODTMAP_ >> (8 * i)) & 0xff;
+		if (reg != (1 << i)) { /* ODTMAP differs from the default for this rank */
+			reg = ((reg & 0xf) << 16) | ((reg >> 4) & 0xf);
+			BM_DDR_PUB_WRITE(port, DDR_PUB_RANKIDR, i);
+			BM_DDR_PUB_WRITE(port, DDR_PUB_ODTCR, reg);
+		}
+	}
+
 	if (!info->ecc_on) {
 		/* disable unused 9-th data byte */
 		uint32_t tmp = BM_DDR_PUB_READ(port, DDR_PUB_DX8GCR0);
@@ -438,7 +456,7 @@ int ddr_init(int port, bool dual_mode, struct ddr_configuration *info)
 					| (info->PHY_HOST_VREF << 16) \
 					| (info->PHY_HOST_VREF << 8) \
 					| (info->PHY_HOST_VREF);
-		for (int i = 0; i <= 8; i++) {
+		for (i = 0; i <= 8; i++) {
 			/* all registers lie at constant offsets from one another: */
 			BM_DDR_PUB_WRITE(port, DDR_PUB_DX0GCR5 + \
 					(DDR_PUB_DX1GCR5 - DDR_PUB_DX0GCR5) * i,

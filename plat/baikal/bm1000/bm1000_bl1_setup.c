@@ -35,7 +35,7 @@ CASSERT(sizeof(trusted_mailbox) == BAIKAL_TRUSTED_MAILBOX_SIZE,
 	assert_trusted_mailbox_size);
 
 /* Allocate space in static memory for DDR SPD content */
-const struct spd_container spd_content = {0};
+struct spd_container spd_content __attribute__((aligned(4))) = {0};
 
 /*
  * Cannot use default weak implementation in bl1_main.c because BL1 RW and BL2

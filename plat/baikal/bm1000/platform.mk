@@ -70,6 +70,7 @@ BL1_SOURCES		+=	drivers/arm/ccn/ccn.c				\
 				plat/baikal/bm1000/drivers/ddr/ddr_init.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_lcru.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_main.c	\
+				plat/baikal/bm1000/drivers/ddr/ddr_cfg.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_master.c	\
 				plat/baikal/common/baikal_bl1_stack.c		\
 				plat/baikal/common/baikal_common.c		\
@@ -79,8 +80,7 @@ BL1_SOURCES		+=	drivers/arm/ccn/ccn.c				\
 				plat/baikal/common/memtest.c			\
 				plat/baikal/common/ndelay.c
 ifneq ($(BAIKAL_TARGET),qemu-m)
-BL1_SOURCES		+=	plat/baikal/bm1000/drivers/ddr/ddr_odt_settings.c\
-				plat/baikal/bm1000/drivers/ddr/ddr_spd.c
+BL1_SOURCES		+=	plat/baikal/bm1000/drivers/ddr/ddr_spd.c
 endif
 
 override BL1_LINKERFILE	:=	plat/baikal/common/bl1.ld.S

@@ -20,8 +20,6 @@
 #define TZC_RATTRIBUTE_OFS 0x110
 #define TZC_REIDACCESS_OFS 0x114
 
-int ddr_odt_configuration(const unsigned port, const uint16_t crc_val, struct ddr_configuration *const data);
-
 static void tzc_set_transparent(const unsigned conf)
 {
 	if (conf & 0x1) {
@@ -37,11 +35,10 @@ static void tzc_set_transparent(const unsigned conf)
 	}
 }
 
-static int ddr_port_init(int port, struct spd_container *ctx, bool dual_mode)
+static int ddr_port_init(int port, bool dual_mode)
 {
 	struct ddr_configuration data = {0};
-	const uint16_t spd_crc = ctx->content[port].crc[1] << 8 |
-				 ctx->content[port].crc[0];
+	struct ddr_local_conf *cfg = (struct ddr_local_conf *)spd_content.content[port].user;
 
 	if (ddr_config_by_spd(port, &data)) {
 		goto error;
@@ -61,9 +58,27 @@ static int ddr_port_init(int port, struct spd_container *ctx, bool dual_mode)
 	data.dbus_half = true;
 #endif
 
-	if (ddr_odt_configuration(port, spd_crc, &data)) {
-		goto error;
+	data.RTT_WR = 1;
+	data.RTT_NOM = 3;
+#if defined(BAIKAL_DUAL_CHANNEL_MODE)
+	if (data.dimms == 2) {
+		data.PHY_HOST_VREF = 25; /* 61,2% */
+		data.PHY_DRAM_VREF = 30; /* 79,5% */
 	}
+#endif
+
+	if (cfg->rtt_wr)
+		data.RTT_WR = cfg->rtt_wr - 1;
+	if (cfg->rtt_nom)
+		data.RTT_NOM = cfg->rtt_nom - 1;
+	if (cfg->rtt_park)
+		data.RTT_PARK = cfg->rtt_park - 1;
+	if (cfg->phy_odt)
+		data.PHY_ODT = cfg->phy_odt - 1;
+	if (cfg->phy_odi_pu)
+		data.PHY_ODI_PU = cfg->phy_odi_pu - 1;
+	if (cfg->odi)
+		data.DIC = (cfg->odi - 1) * 2; // only 0 and 2 valid
 
 	if (ddr_lcru_initport(port, data.clock_mhz)) {
 		goto failed;
@@ -76,7 +91,7 @@ static int ddr_port_init(int port, struct spd_container *ctx, bool dual_mode)
 		ddr_init_ecc_memory(port);
 	}
 
-	ctx->speed_mts[port] = data.clock_mhz * 2;
+	spd_content.speed_mts[port] = data.clock_mhz * 2;
 
 	INFO("DIMM%u: module rate %u MHz, AA-RCD-RP-RAS %u-%u-%u-%u\n", port,
 	     data.clock_mhz * 2, data.CL, data.tRCD, data.tRP, data.tRAS);
@@ -94,7 +109,6 @@ int dram_init(void)
 {
 	int ret = 0;
 	unsigned conf = 0;
-	extern struct spd_container spd_content;
 
 	if (ddr_read_spd(0) != NULL) {
 		if (spd_content.content[0].mem_type == SPD_MEMTYPE_DDR4) {
@@ -114,8 +128,10 @@ int dram_init(void)
 		}
 	}
 
+	ddr_conf(conf);
+
 	if (conf & 0x1) {
-		ret = ddr_port_init(0, &spd_content, (conf & 0x2));
+		ret = ddr_port_init(0, (conf & 0x2));
 	} else {
 		ddr_lcru_disable(0);
 	}
@@ -125,7 +141,7 @@ int dram_init(void)
 	}
 
 	if (conf & 0x2) {
-		ret = ddr_port_init(1, &spd_content, (conf & 0x1));
+		ret = ddr_port_init(1, (conf & 0x1));
 	}
 
 	if (ret) {

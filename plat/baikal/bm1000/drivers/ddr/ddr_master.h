@@ -114,6 +114,8 @@ struct phy_content {
 	uint32_t DTCR1_;
 	uint32_t DSGCR_;
 	uint32_t ZQCR_;
+	uint32_t ZQ0PR_;
+	uint32_t ZQ1PR_;
 	unsigned dbus_half;
 };
 

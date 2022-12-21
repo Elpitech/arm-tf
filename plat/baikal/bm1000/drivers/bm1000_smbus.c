@@ -60,15 +60,15 @@ struct smbus_regs {
 #define SCL_CLK_DIV	499
 CASSERT(SCL_CLK_DIV < 1024, assert_smbus_scl_clk_div);
 
-unsigned smbus_txrx(const uintptr_t base,
-		    const unsigned targetaddr,
-		    const void *const txbuf,
-		    const unsigned txbufsize,
-		    void *const rxbuf,
-		    const unsigned rxbufsize)
+int smbus_txrx(const uintptr_t base,
+	       const unsigned targetaddr,
+	       const void *const txbuf,
+	       const unsigned txbufsize,
+	       void *const rxbuf,
+	       const unsigned rxbufsize)
 {
 	volatile struct smbus_regs *const smbusregs = (volatile struct smbus_regs *const)base;
-	unsigned rxedsize = 0;
+	int rxedsize = -1;
 	uint8_t *const rxptr = (uint8_t *)rxbuf;
 	const uint8_t *const txptr = (uint8_t *)txbuf;
 

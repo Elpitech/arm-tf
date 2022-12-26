@@ -138,6 +138,9 @@ static void baikal_ddrphy_set_registers(const unsigned port, struct phy_content 
 	ndelay(40);
 
 	if (phy->RDIMMGCR0_ & 0x1) {
+		BM_DDR_PUB_WRITE(port, DDR_PUB_RDIMMCR0, phy->RDIMMCR0_);
+		BM_DDR_PUB_WRITE(port, DDR_PUB_RDIMMCR1, phy->RDIMMCR1_);
+		BM_DDR_PUB_WRITE(port, DDR_PUB_RDIMMCR2, phy->RDIMMCR2_);
 		BM_DDR_PUB_WRITE(port, DDR_PUB_RDIMMGCR0, phy->RDIMMGCR0_);
 		BM_DDR_PUB_WRITE(port, DDR_PUB_RDIMMGCR1, phy->RDIMMGCR1_);
 		BM_DDR_PUB_WRITE(port, DDR_PUB_RDIMMGCR2, phy->RDIMMGCR2_);
@@ -235,7 +238,8 @@ static int baikal_ddrphy_pir_training(const unsigned port, uint32_t mode)
 		if (reg & 0x1) {
 			if (reg & 0x0ff80000) {
 				ret = reg;
-				ERROR("%s: completed with errors, 0x%x\n", __func__, ret);
+				ERROR("%s: completed with errors, 0x%x (0x%08x)\n",
+				      __func__, ret, BM_DDR_PUB_READ(port, DDR_PUB_PGSR1));
 			}
 			break;
 		} else if (timeout_elapsed(timeout)) {

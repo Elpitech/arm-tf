@@ -549,63 +549,63 @@ int phy_config_content(struct phy_content *phy,
 		/* RC03 Command_Address and CS Driver Control */
 		uint8_t ca_drv = (data->registered_ca_stren >> 4) & 0x3;
 		uint8_t cs_drv = (data->registered_ca_stren >> 6) & 0x3;
-		phy->RDIMMGCR0_ &= ~GENMASK(15, 12);
-		phy->RDIMMGCR0_ |=  GENMASK(15, 12) & (((cs_drv << 2) | ca_drv) << 12);
+		phy->RDIMMCR0_ &= ~GENMASK(15, 12);
+		phy->RDIMMCR0_ |=  GENMASK(15, 12) & (((cs_drv << 2) | ca_drv) << 12);
 
 		/* RC04 ODT and CKE Driver Control */
 		uint8_t cke_drv = (data->registered_ca_stren) & 0x3;
 		uint8_t odt_drv = (data->registered_ca_stren >> 2) & 0x3;
-		phy->RDIMMGCR0_ &= ~GENMASK(19, 16);
-		phy->RDIMMGCR0_ |=  GENMASK(19, 16) & (((cke_drv << 2) | odt_drv) << 16);
+		phy->RDIMMCR0_ &= ~GENMASK(19, 16);
+		phy->RDIMMCR0_ |=  GENMASK(19, 16) & (((cke_drv << 2) | odt_drv) << 16);
 
 		/* RC05 Clock Driver Control */
 		uint8_t y0y2_drv = (data->registered_clk_stren) & 0x3;
 		uint8_t y1y3_drv = (data->registered_clk_stren >> 2) & 0x3;
-		phy->RDIMMGCR0_ &= ~GENMASK(23, 20);
-		phy->RDIMMGCR0_ |=  GENMASK(23, 20) & (((y0y2_drv << 2) | y1y3_drv) << 20);
+		phy->RDIMMCR0_ &= ~GENMASK(23, 20);
+		phy->RDIMMCR0_ |=  GENMASK(23, 20) & (((y0y2_drv << 2) | y1y3_drv) << 20);
 
 		switch (data->clock_mhz * 2) {
 		/* RC10: RDIMM Operating Speed Control Word (CR1)*/
 		/* RC3x: Fine Granularity Operating Speed Control (CR2) */
 		case 1600:
-			phy->RDIMMGCR1_ &= ~GENMASK(11, 8);
-			phy->RDIMMGCR2_ &= ~GENMASK(23, 16);
-			phy->RDIMMGCR2_ |=  GENMASK(23, 16) & 0x11 << 16;
+			phy->RDIMMCR1_ &= ~GENMASK(11, 8);
+			phy->RDIMMCR2_ &= ~GENMASK(23, 16);
+			phy->RDIMMCR2_ |=  GENMASK(23, 16) & 0x11 << 16;
 			break;
 		case 1866:
-			phy->RDIMMGCR1_ &= ~GENMASK(11, 8);
-			phy->RDIMMGCR1_ |=  GENMASK(11, 8) & (1 << 8);
-			phy->RDIMMGCR2_ &= ~GENMASK(23, 16);
-			phy->RDIMMGCR2_ |=  GENMASK(23, 16) & 0x1f << 16;
+			phy->RDIMMCR1_ &= ~GENMASK(11, 8);
+			phy->RDIMMCR1_ |=  GENMASK(11, 8) & (1 << 8);
+			phy->RDIMMCR2_ &= ~GENMASK(23, 16);
+			phy->RDIMMCR2_ |=  GENMASK(23, 16) & 0x1f << 16;
 			break;
 		case 2132:
-			phy->RDIMMGCR1_ &= ~GENMASK(11, 8);
-			phy->RDIMMGCR1_ |= (GENMASK(11, 8) & (2 << 8));
-			phy->RDIMMGCR2_ &= ~GENMASK(23, 16);
-			phy->RDIMMGCR2_ |= (GENMASK(23, 16) & 0x2c << 16);
+			phy->RDIMMCR1_ &= ~GENMASK(11, 8);
+			phy->RDIMMCR1_ |= (GENMASK(11, 8) & (2 << 8));
+			phy->RDIMMCR2_ &= ~GENMASK(23, 16);
+			phy->RDIMMCR2_ |= (GENMASK(23, 16) & 0x2c << 16);
 			break;
 		case 2400:
-			phy->RDIMMGCR1_ &= ~GENMASK(11, 8);
-			phy->RDIMMGCR1_ |=  GENMASK(11, 8) & (3 << 8);
-			phy->RDIMMGCR2_ &= ~GENMASK(23, 16);
-			phy->RDIMMGCR2_ |=  GENMASK(23, 16) & 0x39 << 16;
+			phy->RDIMMCR1_ &= ~GENMASK(11, 8);
+			phy->RDIMMCR1_ |=  GENMASK(11, 8) & (3 << 8);
+			phy->RDIMMCR2_ &= ~GENMASK(23, 16);
+			phy->RDIMMCR2_ |=  GENMASK(23, 16) & 0x39 << 16;
 			break;
 		case 2666:
-			phy->RDIMMGCR1_ &= ~GENMASK(11, 8);
-			phy->RDIMMGCR1_ |=  GENMASK(11, 8) & (4 << 8);
-			phy->RDIMMGCR2_ &= ~GENMASK(23, 16);
-			phy->RDIMMGCR2_ |=  GENMASK(23, 16) & 0x47 << 16;
+			phy->RDIMMCR1_ &= ~GENMASK(11, 8);
+			phy->RDIMMCR1_ |=  GENMASK(11, 8) & (4 << 8);
+			phy->RDIMMCR2_ &= ~GENMASK(23, 16);
+			phy->RDIMMCR2_ |=  GENMASK(23, 16) & 0x47 << 16;
 			break;
 		default:
 			break;
 		}
 
 		if (data->mirrored_dimm) {
-			phy->RDIMMGCR1_ &= ~GENMASK(23, 20);
-			phy->RDIMMGCR1_ |=  GENMASK(23, 20) & 0xc << 8;
+			phy->RDIMMCR1_ &= ~GENMASK(23, 20);
+			phy->RDIMMCR1_ |=  GENMASK(23, 20) & 0xc << 20;
 		} else {
-			phy->RDIMMGCR1_ &= ~GENMASK(23, 20);
-			phy->RDIMMGCR1_ |=  GENMASK(23, 20) & 0x4 << 8;
+			phy->RDIMMCR1_ &= ~GENMASK(23, 20);
+			phy->RDIMMCR1_ |=  GENMASK(23, 20) & 0x4 << 20;
 		}
 	}
 

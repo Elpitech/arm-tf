@@ -206,6 +206,13 @@ void bl31_platform_setup(void)
 	bs1000_usb_init();
 	bs1000_gmac_init();
 
+#ifdef BAIKAL_MUX_INIT
+	/* setup mux state */
+	scp_lcru_clrsetbits(SCP_GPR_LSP_CTL,
+			    SCP_GPR_LSP_CTL_SEL_PERIPH_MASK,
+			    BAIKAL_MUX_INIT << SCP_GPR_LSP_CTL_SEL_PERIPH_SHIFT);
+#endif
+
 	baikal_dimm_spd_read();
 	baikal_fdt_memory_update();
 	baikal_fdt_ddr_node_enable();

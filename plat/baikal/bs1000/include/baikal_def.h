@@ -43,4 +43,8 @@
 # define SYS_COUNTER_FREQ_IN_TICKS	ULL((1000 * 1000 * 1000) / 16)
 #endif
 
+#if defined(ELPITECH)
+# define BAIKAL_MUX_INIT	0x1
+#endif
+
 #endif /* BAIKAL_DEF_H */

@@ -65,6 +65,7 @@
 		   targetaddr, txbuf, txbufsize, rxbuf, rxbufsize)
 # define BAIKAL_LVDS_CLKEN_GPIO_PIN	17
 # define BAIKAL_HDMI_CLKEN_GPIO_PIN	18
+# define BAIKAL_SCP_FLASH
 #elif defined(ELPITECH)
 # ifndef BAIKAL_DDR_CUSTOM_CLOCK_FREQ
 #  define BAIKAL_DDR_CUSTOM_CLOCK_FREQ	1200
@@ -73,10 +74,13 @@
 	smbus_txrx(MMAVLSP_SMBUS1_BASE,					 \
 		   BAIKAL_SMBUS_ICLK_FREQ, SMBUS_SHT_100KHZ, 100000,	 \
 		   targetaddr, txbuf, txbufsize, rxbuf, rxbufsize)
+# define BAIKAL_SCP_FLASH
 #elif defined(BAIKAL_QEMU_M)
 # define BAIKAL_DIMM_SPD_STATIC
 # undef  SYS_COUNTER_FREQ_IN_TICKS
 # define SYS_COUNTER_FREQ_IN_TICKS	ULL((1000 * 1000 * 1000) / 16)
+#elif defined(BAIKAL_QEMU_L)
+# define BAIKAL_SCP_FLASH
 #endif
 
 #endif /* BAIKAL_DEF_H */

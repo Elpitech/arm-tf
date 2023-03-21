@@ -371,7 +371,7 @@ int fdt_get_panel(modeline_t *modeline)
 		node = fdt_next_node(fdt, node, NULL);
 		if (node < 0)
 			return node;
-		if (!fdt_node_check_compatible(fdt, node, "baikal,vdu"))
+		if (fdt_node_check_compatible(fdt, node, "baikal,vdu"))
 			continue;
 		if (!fdt_device_is_enabled(fdt, node))
 			continue;

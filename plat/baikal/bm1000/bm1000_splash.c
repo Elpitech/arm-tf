@@ -148,7 +148,10 @@ static int edp_setup(const void *fdt, uint32_t node, modeline_t *modeline)
 			ERROR("No i2c bus for eDP found (phandle %x)\n", phandle);
 			return -1;
 		}
+	} else {
+		return -1;
 	}
+
 	edp_mode_regs[0] = 0x10;//start addr
 	val = modeline->hact + modeline->hsync + modeline->hbp + modeline->hfp;
 	edp_mode_regs[1] = (val >> 8) & 0xff;
@@ -232,7 +235,7 @@ static int panel_setup(const void *fdt, uint32_t node, modeline_t *modeline)
 	}
 
 	prop = fdt_getprop(fdt, node, "elpitech,edp-addr", &plen);
-	if (plen)
+	if (prop)
 		edp_setup(fdt, node, modeline);
 
 	return 0;

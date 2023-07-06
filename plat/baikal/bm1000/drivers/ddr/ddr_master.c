@@ -16,6 +16,10 @@
 
 #define DDR_CRC_ENABLE 0
 
+#ifndef CONFIG_AL	/* possible values: 0 (not used), 1 (CL-1) or 2 (CL-2) */
+#define CONFIG_AL	1	/* (CL-1) is default */
+#endif
+
 #define CLOCK_PS(x)	\
 	(uint32_t)((((uint64_t)(x) * 1000) / data->tCK + 974) / 1000)
 #define CLOCK_NS(x)	CLOCK_PS((uint64_t)(x) * 1000)
@@ -130,8 +134,14 @@ void ddrc_set_default_vals(struct ctl_content *ddrc)
 	ddrc->ADDRMAP7_	  = 0x00000f0f;
 	ddrc->ADDRMAP8_	  = 0x00000a01;
 	ddrc->ODTCFG_	  = 0x07000600;
-	ddrc->ODTMAP_	  = 0x08040201;
-	ddrc->SCHED_	  = 0xd00;
+	/*
+	 * Board design guide recommends 40 Ohm termination on
+	 * the higher rank of the other DIMM. We presume that the rank
+	 * makes no differrence (in case of dual rank DIMMS).
+	 * Hence the setting should work in all possible cases.
+	 */
+	ddrc->ODTMAP_	  = 0x11114444;
+	ddrc->SCHED_	  = 0x800;
 	ddrc->SCHED1_	  = 0x40;
 	ddrc->DQMAP0_	  = 0x0;
 	ddrc->DQMAP1_	  = 0x0;
@@ -166,6 +176,8 @@ void phy_set_default_vals(struct phy_content *phy)
 	phy->DTPR4_	= 0x02950908;
 	phy->DTPR5_	= 0x00371009;
 	phy->ZQCR_	= 0x04058d00;
+	phy->ZQ0PR_	= 0x0007bb7b;
+	phy->ZQ1PR_	= 0x0007bb7b;
 	phy->DX8GCR0_	= 0x40000205;
 	phy->DSGCR_	= 0x0064443a;
 	phy->MR0_	= 0x00000a52;
@@ -632,8 +644,10 @@ int phy_config_content(struct phy_content *phy,
 	phy->DTPR5_ |=  GENMASK(23, 16) & (data->tRC << 16); /* ACTtoACT */
 
 	phy->MR0_ = set_mr0(data->CL, data->tWR, data->tRTP);
-	/* DLL on; DIC RZQ/7 (33 ohm); AL=CL-1; WL off; ODT RTT_NOM off; TDQS off; Qoff normal */
-	phy->MR1_ = 0x9 | (data->DIC & 0x1) << 1 | (data->RTT_NOM & 0x7) << 8;
+	/* DLL on; DIC RZQ/7 (34 ohm); AL=0; WL off; ODT RTT_NOM off; TDQS off; Qoff normal */
+	phy->MR1_ = 0x1 | (data->DIC & 0x1) << 1 | (data->RTT_NOM & 0x7) << 8;
+	if (data->AL)
+		phy->MR1_ |= (data->CL - data->AL) << 3;
 	phy->MR2_ = set_mr2(data->CWL, data->RTT_WR);
 
 	/*
@@ -681,14 +695,24 @@ int phy_config_content(struct phy_content *phy,
 		phy->ZQCR_ |= 0x7 << 8;
 	}
 
+	if (data->PHY_ODI_PU) {
+		phy->ZQ1PR_ &= ~0xf;
+		phy->ZQ1PR_ |=  0xf & data->PHY_ODI_PU;
+	}
+	if (data->PHY_ODT) {
+		phy->ZQ1PR_ &= ~GENMASK(7, 4);
+		phy->ZQ1PR_ |=  GENMASK(7, 4) & (data->PHY_ODT << 4);
+	}
+	phy->ZQ0PR_ = phy->ZQ1PR_; //vvv: ?
+	
 	return 0;
 }
 
 int ddr_config_by_spd(int port, struct ddr_configuration *data)
 {
 	uint32_t tmp;
-	extern struct spd_container spd_content;
-	struct ddr4_spd_eeprom *const spd = &spd_content.content[port];
+	const struct ddr4_spd_eeprom *spd = &spd_content.content[port];
+	struct ddr_local_conf *conf = (struct ddr_local_conf *)spd->user;
 
 	data->dimms = 1;
 #ifdef BAIKAL_DUAL_CHANNEL_MODE
@@ -777,23 +801,23 @@ int ddr_config_by_spd(int port, struct ddr_configuration *data)
 	/* Get Cycle Time (tCK) */
 	data->tCK = SPD_TO_PS(spd->tck_min, spd->fine_tck_min);
 	data->clock_mhz = 1000000 / data->tCK;
-	if ((data->clock_mhz <= 800) || ((data->clock_mhz > 800) && (data->clock_mhz < 900))) {
-		data->clock_mhz = 800;
-	} else if ((data->clock_mhz <= 933) || ((data->clock_mhz > 933) && (data->clock_mhz < 1050))) {
-		data->clock_mhz = 933;
-	} else if ((data->clock_mhz <= 1066) || ((data->clock_mhz > 1066) && (data->clock_mhz < 1150))) {
-		data->clock_mhz = 1066;
-	} else if ((data->clock_mhz <= 1200) || ((data->clock_mhz > 1200) && (data->clock_mhz < 1300))) {
-		data->clock_mhz = 1200;
-	} else {
-		data->clock_mhz = 1333;
-	}
+	if (conf->freq)
+		data->clock_mhz = conf->freq / 2;
 #ifdef BAIKAL_DDR_CUSTOM_CLOCK_FREQ
-	if (data->clock_mhz > BAIKAL_DDR_CUSTOM_CLOCK_FREQ) {
+	else if (data->clock_mhz > BAIKAL_DDR_CUSTOM_CLOCK_FREQ) {
 		data->clock_mhz = BAIKAL_DDR_CUSTOM_CLOCK_FREQ;
-		data->tCK = 1000000 / data->clock_mhz;
 	}
 #endif
+	if (data->clock_mhz >= 1333)
+		data->clock_mhz = 1333;
+	else if (data->clock_mhz >= 1200)
+		data->clock_mhz = 1200;
+	else if (data->clock_mhz >= 1066)
+		data->clock_mhz = 1066;
+	else if (data->clock_mhz >= 933)
+		data->clock_mhz = 933;
+	else data->clock_mhz = 800;
+	data->tCK = 1000000 / data->clock_mhz; /* recalculate */
 
 #ifdef BAIKAL_DUAL_CHANNEL_MODE
 #ifdef BAIKAL_DBM20
@@ -816,6 +840,8 @@ int ddr_config_by_spd(int port, struct ddr_configuration *data)
 
 	tmp = SPD_TO_PS(spd->taa_min, spd->fine_taa_min);
 	tmp = CLOCK_PS(tmp);
+	if (conf->cl)
+		tmp += conf->cl; // increase CAS if requested by local conf
 	while (tmp < 64 && (lat_mask & (1ULL << tmp)) == 0) {
 		++tmp;
 	}
@@ -891,7 +917,18 @@ int ddr_config_by_spd(int port, struct ddr_configuration *data)
 	}
 
 	/* Compute Additive Latency (AL). Note: we set AL to (CL-1) like S.Hudchenko example */
-	data->AL = data->CL - 1;
+	if (conf->al) {
+		if (conf->al == 1)
+			data->AL = 0;
+		else
+			data->AL = data->CL - (conf->al - 1);
+	} else {
+#if CONFIG_AL == 0
+		data->AL = 0;
+#else
+		data->AL = data->CL - CONFIG_AL;
+#endif
+	}
 
 	/* Compute Read Latency (RL) */
 	data->RL = data->AL + data->CL + data->PL;

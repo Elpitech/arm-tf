@@ -234,6 +234,8 @@ struct spd_container {
 	uint32_t speed_mts[2];
 } __packed;
 
+extern struct spd_container spd_content;
+
 /* Byte 2 Fundamental Memory Types */
 #define SPD_MEMTYPE_DDR4	0x0c
 
@@ -252,5 +254,6 @@ struct spd_container {
 #define DDR4_SPD_MODULETYPE_32B_SO_DIMM		0x0d
 
 void *ddr_read_spd(const unsigned int dimm_idx);
+void ddr_write_conf(unsigned dimm_idx, void *buf, int size);
 
 #endif /* DDR_SPD_H */

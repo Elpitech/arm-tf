@@ -71,11 +71,11 @@ BL1_SOURCES		+=	drivers/arm/ccn/ccn.c				\
 				plat/baikal/bm1000/bm1000_splash.c		\
 				plat/baikal/bm1000/drivers/bm1000_cmu.c		\
 				plat/baikal/bm1000/drivers/bm1000_smbus.c	\
+				plat/baikal/bm1000/drivers/ddr/ddr_cfg.c        \
 				plat/baikal/bm1000/drivers/ddr/ddr_init.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_lcru.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_main.c	\
 				plat/baikal/bm1000/drivers/ddr/ddr_master.c	\
-				plat/baikal/bm1000/drivers/ddr/ddr_odt_settings.c\
 				plat/baikal/bm1000/drivers/ddr/ddr_spd.c	\
 				plat/baikal/common/baikal_bl1_stack.c		\
 				plat/baikal/common/baikal_common.c		\

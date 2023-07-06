@@ -28,8 +28,12 @@
 
 #define VDU_PLL_REF_CLOCK		27000000
 #define LVDS_VDU_AXI_CLOCK		300000000 /* set in accordance with bm1000_mmavlsp.c */
-#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0x7f	  /* 50% duty cycle */
-#define BAIKAL_VDU_DEFAULT_PWM_FREQ	10000
+#if !defined(ELPITECH) || BOARD_VER == 3
+#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0x7f      /* 50% duty cycle */
+#else
+#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0xbf      /* 75% duty cycle */
+#endif
+#define BAIKAL_VDU_DEFAULT_PWM_FREQ	25000
 
 struct bmp_header {
 	/* 2-byte signature is omitted (placed just before file_size) */
@@ -300,7 +304,7 @@ void vdu_init(uint64_t vdu_base, uint32_t fb_base, const modeline_t *mode)
 		/* Hold PWM Clock Domain Reset, disable clocking */
 		mmio_write_32(vdu_base + BAIKAL_VDU_PWMFR, 0);
 
-		pwmfr = BAIKAL_VDU_PWMFR_PWMFCD(LVDS_VDU_AXI_CLOCK / BAIKAL_VDU_DEFAULT_PWM_FREQ - 1);
+		pwmfr = BAIKAL_VDU_PWMFR_PWMFCD(LVDS_VDU_AXI_CLOCK / BAIKAL_VDU_DEFAULT_PWM_FREQ / 256 - 1);
 		mmio_write_32(vdu_base + BAIKAL_VDU_PWMFR, pwmfr);
 
 		mmio_write_32(vdu_base + BAIKAL_VDU_PWMDCR, BAIKAL_VDU_DEFAULT_BRIGHTNESS);

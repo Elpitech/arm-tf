@@ -146,7 +146,7 @@
 #define BAIKAL_MMC_FIP_MAX_SIZE		round_up(BAIKAL_SPI_FIP_MAX_SIZE, 512)
 
 #define BAIKAL_SPI_FIP
-#if defined(BAIKAL_MBM10) || defined(BAIKAL_MBM20)
+#if defined(BAIKAL_MBM10) || defined(BAIKAL_MBM20) || defined(ELPITECH)
 # define BAIKAL_SPI_FIP_NVBASE		0x8f000
 # define BAIKAL_SPI_DDRCFG_NVBASE	0x240000
 #else

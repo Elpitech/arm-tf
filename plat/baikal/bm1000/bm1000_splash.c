@@ -28,7 +28,11 @@
 
 #define VDU_PLL_REF_CLOCK		27000000
 #define LVDS_VDU_AXI_CLOCK		300000000 /* set in accordance with bm1000_mmavlsp.c */
-#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0xbf      /* 70% duty cycle */
+#if !defined(ELPITECH) || BOARD_VER == 3
+#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0x7f      /* 50% duty cycle */
+#else
+#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0xbf      /* 75% duty cycle */
+#endif
 #define BAIKAL_VDU_DEFAULT_PWM_FREQ	25000
 
 const modeline_t lvds_video_mode = {148500000, 1920, 88, 44, 148, 1080, 4, 5, 36, 0, 0, 0,

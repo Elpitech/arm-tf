@@ -23,7 +23,11 @@
 #include "bm1000_splash.h"
 #include "bm1000_vdu.h"
 
-#define BAIKAL_VDU_DEFAULT_BRIGHTNESS	0xbf  /* 75% duty cycle */
+#if !defined(ELPITECH) || BOARD_VER == 3
+#define BAIKAL_VDU_DEFAULT_BRIGHTNESS  0x7f      /* 50% duty cycle */
+#else
+#define BAIKAL_VDU_DEFAULT_BRIGHTNESS  0xbf      /* 75% duty cycle */
+#endif
 #define BAIKAL_VDU_DEFAULT_PWM_FREQ 	25000
 
 modeline_t lvds_video_mode = {148500000, 2, BAIKAL_LVDS_VESA_24,

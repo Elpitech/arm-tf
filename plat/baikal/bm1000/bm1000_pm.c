@@ -21,7 +21,7 @@
 #include <mbm_bmc.h>
 #elif defined(ELPITECH)
 #include <dw_gpio.h>
-#if BOARD_VER == 5
+#if (BOARD_VER == 5) || (BOARD_VER == 8)
 #define BM_RESET_PIN	17
 #define BM_POWER_PIN	16
 #else

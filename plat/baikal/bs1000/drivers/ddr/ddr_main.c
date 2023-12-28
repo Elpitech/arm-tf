@@ -30,7 +30,7 @@ int ddr_odt_configuration(const unsigned int port,
 
 uint8_t firmware_container[55036];
 
-static uint64_t ddr_get_addr_strip_bit(int channels, const void *spd)
+static uint64_t ddr_get_addr_strip_bit(int channels, int capacity_gb)
 {
 	char bytes[3];
 	uint64_t mask;
@@ -51,8 +51,6 @@ static uint64_t ddr_get_addr_strip_bit(int channels, const void *spd)
 		bytes[1] = 9;
 		bytes[2] = 0;
 	} else if (channels == 6) {
-		int capacity_gb = spd_get_baseconf_dimm_capacity(spd) / 1024 / 1024 / 1024;
-
 		switch (capacity_gb) {
 		case 1:
 		/*   1 GiB DRAM size per SN-F addressing */
@@ -123,6 +121,7 @@ int ddr_port_init(int port, struct ddr4_spd_eeprom *spd,
 	int err = 0;
 	static int fw_read_flag; /* {2,1} if fw for {r,u}dimm is in place */
 	struct ddr_configuration data = {0};
+	int capacity_gb = spd_get_baseconf_dimm_capacity(spd) / 1024 / 1024 / 1024;
 
 	if (ddr_config_by_spd(port, spd, &data)) {
 		goto error;
@@ -139,7 +138,8 @@ int ddr_port_init(int port, struct ddr4_spd_eeprom *spd,
 		data.dimms = 2;
 	}
 
-	data.addr_strip_bit = ddr_get_addr_strip_bit(channels, (void *)spd);
+	data.addr_strip_bit = ddr_get_addr_strip_bit(channels,
+		       capacity_gb * (dual_channel_mode ? 2 : 1));
 	if ((int64_t)data.addr_strip_bit < 0) {
 		goto error;
 	}

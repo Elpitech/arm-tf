@@ -18,6 +18,9 @@ else ifeq ($(BAIKAL_TARGET),dbs-ov)
 $(eval $(call add_define,BAIKAL_DBS_OV))
 else ifeq ($(BAIKAL_TARGET),elp_bs)
 $(eval $(call add_define,ELPITECH))
+ifneq ($(BAIKAL_DDR_CUSTOM_CLOCK_FREQ),)
+$(eval $(call add_define,BAIKAL_DDR_CUSTOM_CLOCK_FREQ))
+endif
 else ifeq ($(BAIKAL_TARGET),qemu-s)
 $(eval $(call add_define,BAIKAL_QEMU))
 else

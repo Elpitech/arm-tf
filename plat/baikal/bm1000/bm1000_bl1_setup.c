@@ -38,7 +38,7 @@ CASSERT(sizeof(trusted_mailbox) == BAIKAL_TRUSTED_MAILBOX_SIZE,
 	assert_trusted_mailbox_size);
 
 /* Allocate space in static memory for DDR SPD content */
-const struct spd_container spd_content;
+struct spd_container spd_content __attribute__((aligned(4))) = {0};
 CASSERT(sizeof(spd_content) <= BAIKAL_SPD_MAX_SIZE,
 	assert_spd_content_size);
 

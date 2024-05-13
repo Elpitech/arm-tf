@@ -832,13 +832,9 @@ static int baikal_ddrphy_dram_init(const unsigned int port, const unsigned int c
 
 int ddr_init(const int port, const bool dual_mode, struct ddr_configuration *info)
 {
-<<<<<<< HEAD
 	int err;
 	uint32_t reg;
-=======
-	int ret = 0;
 	unsigned int i;
->>>>>>> 45d03642d (BM1000: Merge DDR driver with Elpitech version)
 
 	ddr_lcru_clkch_rst(port, LCRU_DDR_CMU_CLKCH0_ACLK, 1);
 	ddr_lcru_clkch_rst(port, LCRU_DDR_CMU_CLKCH1_CORE, 1);
@@ -858,8 +854,6 @@ int ddr_init(const int port, const bool dual_mode, struct ddr_configuration *inf
 	ndelay(40);
 
 	baikal_ddrphy_set_registers(port, info);
-<<<<<<< HEAD
-=======
 
 	/* set ODTCRn according to ODTMAP */
 	for (i = 0; i < 4; i++) {
@@ -870,7 +864,6 @@ int ddr_init(const int port, const bool dual_mode, struct ddr_configuration *inf
 			BM_DDR_PUB_WRITE(port, DDR_PUB_ODTCR, 0x00010001);
 	}
 
->>>>>>> 45d03642d (BM1000: Merge DDR driver with Elpitech version)
 	if (!info->ecc_on) {
 		/* Disable unused 9-th data byte */
 		reg  = BM_DDR_PUB_READ(port, DDR_PUB_DX8GCR0);
@@ -889,9 +882,6 @@ int ddr_init(const int port, const bool dual_mode, struct ddr_configuration *inf
 		    ddr_storage.flsh_vref_use)
 #endif
 	) {
-<<<<<<< HEAD
-		unsigned int i;
-
 		/* Read internal Vref values */
 		reg = (info->PHY_HOST_VREF << 24) |
 		      (info->PHY_HOST_VREF << 16) |
@@ -905,18 +895,6 @@ int ddr_init(const int port, const bool dual_mode, struct ddr_configuration *inf
 					 DDR_PUB_DX0GCR5 +
 					 (DDR_PUB_DX1GCR5 - DDR_PUB_DX0GCR5) * i,
 					 reg);
-=======
-		/* set internal Vref values */
-		uint32_t DXnGCR5_val = (info->PHY_HOST_VREF << 24)
-					| (info->PHY_HOST_VREF << 16)
-					| (info->PHY_HOST_VREF << 8)
-					| (info->PHY_HOST_VREF);
-		for (i = 0; i <= 8; i++) {
-			/* all registers lie at constant offsets from one another: */
-			BM_DDR_PUB_WRITE(port, DDR_PUB_DX0GCR5 +
-					(DDR_PUB_DX1GCR5 - DDR_PUB_DX0GCR5) * i,
-						 DXnGCR5_val);
->>>>>>> 45d03642d (BM1000: Merge DDR driver with Elpitech version)
 		}
 	}
 #endif

@@ -268,7 +268,7 @@ int phyinit_H_readMsgBlock(int port, struct ddr_configuration *data)
 
 	uint8_t CsPresent = data->ranks == 1 ? 0x1 : 0x3;
 
-	if (data->dimms == 2) {
+	if (data->dimms == 2 || data->ranks == 4) { // 4-rank DIMMs
 		CsPresent = CsPresent | (CsPresent << 2);
 	}
 	data->trn_res.rd2wr_CDD_sr = phy_getRd2WrCDDsr(port, 0x4c); /* offsetof(pmu_smb_ddr4_t, CDD_RW_0_0) */

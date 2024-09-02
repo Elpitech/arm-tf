@@ -39,7 +39,7 @@ void phyinit_calcMb(void *mb, struct ddr_configuration *data, int training_2d)
 	pmu_smb_p->PhyVref = data->HOST_VREF;
 
 	pmu_smb_p->CsPresentD0 = (data->ranks == 1) ? 0x1 : 0x3;
-	if (data->dimms == 2) {
+	if (data->dimms == 2 || data->ranks == 4) { // 4-rank DIMMs
 		pmu_smb_p->CsPresentD1 = pmu_smb_p->CsPresentD0 << 2;
 	} else {
 		pmu_smb_p->CsPresentD1 = 0x0;

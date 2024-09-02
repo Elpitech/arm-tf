@@ -180,6 +180,11 @@ int ddr_config_by_spd(int port,
 
 	/* DIMM organization parameters */
 	data->ranks = ((spd->organization >> 3) & 0x7) + 1;
+#if defined(ELPITECH) && (BOARD_VER == 12)
+	if (data->ranks == 4) {
+		NOTICE("4-rank memory support is experimental\n");
+	} else
+#endif
 	if (data->ranks > 2) {
 		ERROR("%d-rank memory is not supported\n", data->ranks);
 		return -1;

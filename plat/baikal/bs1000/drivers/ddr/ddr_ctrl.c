@@ -239,7 +239,7 @@ static void ctrl_set_addr_map(int port, struct ddr_configuration *data)
 
 	/* DIMM_0 have 00b and 01b rank addresses on the board; DIMM_1 have 10b and 11b rank addresses on the Board */
 #if !DDR_DEBUG_TEST_MAPPING
-	if (data->ranks == 2) {
+	if (data->ranks >= 2) {
 		map0_val &= ~GENMASK(4, 0);
 		map0_val |= GENMASK(4, 0) & (hif_addr - 6); /* CS0->hifXX */
 		hif_addr = hif_addr_increment(hif_addr, data);
@@ -248,7 +248,7 @@ static void ctrl_set_addr_map(int port, struct ddr_configuration *data)
 		map0_val |= GENMASK(4, 0) & 31; /* CS0->none: map to none for 1-rank DIMMs (that's not external CS0 signal) */
 	}
 
-	if (data->dimms == 2) {
+	if (data->dimms == 2 || data->ranks == 4) {
 		map0_val &= ~GENMASK(12, 8);
 		map0_val |= GENMASK(12, 8) & ((hif_addr - 7) << 8); /* CS1->hifXX */
 		hif_addr = hif_addr_increment(hif_addr, data);

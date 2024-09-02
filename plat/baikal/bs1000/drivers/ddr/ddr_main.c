@@ -6,9 +6,11 @@
 
 #include <common/debug.h>
 #include <drivers/delay_timer.h>
+#include <drivers/console.h>
 #include <lib/mmio.h>
 
 #include <baikal_bootflash.h>
+#include <baikal_def.h>
 #include <bs1000_dimm_spd.h>
 #include <spd.h>
 
@@ -119,6 +121,118 @@ static uint64_t ddr_get_addr_strip_bit(unsigned int channels, int capacity_gb)
 	return 0;
 }
 
+#ifdef INTERACTIVE_DDR_CONFIG
+static int interactive_ddr_config;
+
+static int console_getc_nonblocked(void)
+{
+	int err = ERROR_NO_VALID_CONSOLE;
+	console_t *console;
+
+	for (console = console_list; console != NULL;
+	     console = console->next) {
+		if ((console->flags & CONSOLE_FLAG_BOOT) && (console->getc != NULL)) {
+			int ret = console->getc(console);
+			if (ret >= 0)
+				return ret;
+			if (err != ERROR_NO_PENDING_CHAR)
+				err = ret;
+		}
+	}
+
+        return err;
+}
+
+static void get_num(uint32_t *ret)
+{
+	int val = 0, key;
+
+	printf(" - Enter number\n");
+	while (1) {
+		key = console_getc();
+		if (key >= '0' && key <= '9') {
+			console_putc(key);
+			val = val * 10 + key - '0';
+		} else if (key == '\n' || key == '\r') {
+			*ret = val;
+			break;
+		} else {
+			break;
+		}
+	}
+	console_putc('\n');
+	return;
+}
+
+static void get_hex_num(uint32_t *ret)
+{
+	int val = 0, key;
+
+	printf(" - Enter hex number\n");
+	while (1) {
+		key = console_getc();
+		if (key >= '0' && key <= '9') {
+			console_putc(key);
+			val = val * 16 + key - '0';
+		} else if (key > 'a' && key <= 'f') {
+			console_putc(key);
+			val = val * 16 + key - 'a' + 0xa;
+		} else if (key == '\n' || key == '\r') {
+			*ret = val;
+			break;
+		} else {
+			break;
+		}
+	}
+	console_putc('\n');
+	return;
+}
+
+static int ddr_update_config(unsigned int port, struct ddr4_spd_eeprom *spd,
+			     struct ddr_configuration *data)
+{
+	int key;
+	uint32_t odt, freq, old_clock;
+
+	old_clock = data->clock_mhz;
+	while (1) {
+		odt = (data->RTT_WR << 8) + (data->RTT_NOM << 4) + data->RTT_PARK;
+		freq = data->clock_mhz * 2;
+		printf("Port %d: Enter number to change value or any other key to continue:\n"
+			"1. DDR_FREQ  (%d)\n"
+			"2. HOST_VREF (%d)\n"
+			"3. DRAM_VREF (%d)\n"
+			"4. ODT       (%x)\n"
+			"5. ODT MAP   (%08x)\n"
+			"*. Continue\n", port, freq, data->HOST_VREF, data->DRAM_VREF,
+			odt, data->odt_map);
+		key = console_getc();
+		if (key == '1') {
+			get_num(&freq);
+			data->clock_mhz = freq / 2;
+		} else if (key == '2') {
+			get_num(&data->HOST_VREF);
+		} else if (key == '3') {
+			get_num(&data->DRAM_VREF);
+		} else if (key == '4') {
+			get_hex_num(&odt);
+			data->RTT_WR = (odt >> 8) & 0x7;
+			data->RTT_NOM = (odt >> 4) & 0x7;
+			data->RTT_PARK = odt & 0x7;
+		} else if (key == '5') {
+			get_hex_num(&data->odt_map);
+		} else {
+			break;
+		}
+	}
+
+	if (data->clock_mhz != old_clock)
+		ddr_config_by_spd(port, spd, data);
+
+	return 0;
+}
+#endif
+
 static int ddr_port_init(unsigned int port, struct ddr4_spd_eeprom *spd,
 			 unsigned int channels, bool dual_channel_mode)
 {
@@ -126,6 +240,7 @@ static int ddr_port_init(unsigned int port, struct ddr4_spd_eeprom *spd,
 	static int fw_read_flag; /* {2,1} if fw for {r,u}dimm is in place */
 	struct ddr_configuration data = {0};
 	int capacity_gb = spd_get_baseconf_dimm_capacity(spd) / 1024 / 1024 / 1024;
+	uint64_t t_start, t_stop, t_diff;
 
 	data.dimms = dual_channel_mode ? 2 : 1;
 
@@ -186,6 +301,13 @@ skip_flash_crc_check:
 		goto error;
 	}
 
+#ifdef INTERACTIVE_DDR_CONFIG
+	if (interactive_ddr_config & (1 << port)) {
+retry:
+		ddr_update_config(port, spd, &data); 
+	}
+#endif
+
 	/* enable PHY 2D training */
 	if (data.clock_mhz >= 1200) {
 		data.phy_training_2d = 1;
@@ -193,6 +315,7 @@ skip_flash_crc_check:
 
 	if (data.clock_mhz != 800) {
 		if (ddr_lcpcmd_set_speedbin(port, data.clock_mhz)) {
+			ERROR("Set speedbin failed (%dMHz)\n", data.clock_mhz);
 			goto error;
 		}
 	}
@@ -200,12 +323,17 @@ skip_flash_crc_check:
 	ddrlcru_apb_reset_off(port);
 
 	if (ctrl_init(port, &data)) {
+		ERROR("Failed to init controller\n");
 		goto error;
 	}
 
 	ddrlcru_core_reset_off(port);
 
-	ctrl_prepare_phy_init(port);
+	err = ctrl_prepare_phy_init(port);
+	if (err) {
+		ERROR("Failed to prepare PHY init\n");
+		goto error;
+	}
 
 	if (data.registered_dimm) {
 		if (fw_read_flag != 2) {
@@ -225,9 +353,22 @@ skip_flash_crc_check:
 		goto error;
 	}
 
+	t_start = read_cntpct_el0();
+
 	phy_main(port, &data);
 
-	ctrl_complete_phy_init(port, &data);
+	err = ctrl_complete_phy_init(port, &data);
+	t_stop = read_cntpct_el0();
+	t_diff = (t_stop -t_start) / (SYS_COUNTER_FREQ_IN_TICKS / 1000000);
+
+	if (err) {
+		printf("phy init failed in %d us\n", (int)t_diff);
+#ifdef INTERACTIVE_DDR_CONFIG
+		goto retry;
+#else
+		goto error;
+#endif
+	}
 
 	if (data.registered_dimm) {
 		/* this is experimental workaround code
@@ -252,6 +393,20 @@ skip_flash_crc_check:
 	INFO("DIMM%u: module rate %u MHz, AA-RCD-RP-RAS %u-%u-%u-%u\n", port,
 	     data.clock_mhz * 2, data.CL, data.tRCD, data.tRP, data.tRAS);
 
+#ifdef INTERACTIVE_DDR_CONFIG
+	if (interactive_ddr_config & (1 << port)) {
+		int key;
+		printf("phy init completed in %d us\n", (int)t_diff);
+		t_stop = read_cntpct_el0();
+		t_diff = (t_stop -t_start) / (SYS_COUNTER_FREQ_IN_TICKS / 1000000);
+		printf("port %d init OK (%d us). Reconfig or Continue [R/C]? (C)", port, (int)t_diff);
+		key = console_getc();
+		printf("\n");
+		if (key == 'r' || key == 'R')
+			goto retry;
+	}
+#endif
+
 	return 0;
 
 error:
@@ -266,6 +421,30 @@ int dram_init(void)
 	unsigned int channels[PLATFORM_CHIP_COUNT];
 	struct ddr4_spd_eeprom *spd_content;
 	unsigned int chip_idx, port_idx, slot_idx;
+#ifdef INTERACTIVE_DDR_CONFIG
+	uint64_t timeout;
+	int key = 0;
+#endif
+
+#ifdef INTERACTIVE_DDR_CONFIG
+	printf("Press S for interactive DDR configuration...");
+	timeout = timeout_init_us(1000000);
+	while (!timeout_elapsed(timeout)) {
+		key = console_getc_nonblocked();
+		if (key > 0)
+			break;
+	}
+	printf("\n");
+	if (key == 's' || key == 'S') {
+		printf("Select starting port (0..5)...");
+		key = console_getc();
+		interactive_ddr_config = 0x3f;
+		if (key > '0' && key <= '5') {
+			interactive_ddr_config <<= (key - '0');
+			interactive_ddr_config &= 0x3f;
+		}
+	}
+#endif
 
 	for (chip_idx = 0, slot_idx = 0; chip_idx < PLATFORM_CHIP_COUNT; ++chip_idx) {
 		channels[chip_idx] = 0;

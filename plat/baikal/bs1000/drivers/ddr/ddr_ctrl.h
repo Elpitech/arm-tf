@@ -21,6 +21,6 @@ void umctl2_exit_SR(int port);
 void umctl2_enter_SR(int port);
 int ctrl_prepare_phy_init(int port);
 int ctrl_init(int port, struct ddr_configuration *data);
-void ctrl_complete_phy_init(int port, struct ddr_configuration *data);
+int ctrl_complete_phy_init(int port, struct ddr_configuration *data);
 
 #endif /* DDR_CTRL_H */

@@ -535,9 +535,10 @@ int ctrl_prepare_phy_init(int port)
 	return ret;
 }
 
-void ctrl_complete_phy_init(int port, struct ddr_configuration *data)
+int ctrl_complete_phy_init(int port, struct ddr_configuration *data)
 {
 	uint64_t timeout;
+	int err = 0;
 
 	/* from S.Hudchenko (verif/top/tb/bk_top_seq_pkg/bk_top_mm_ddr_seq_pkg/bk_top_ddr_init_seq.svh) */
 	/* enable Quazi-Dynamic registers programming (uMCTL2 DataBook p.1567 Table6-8, step 15) */
@@ -557,7 +558,8 @@ void ctrl_complete_phy_init(int port, struct ddr_configuration *data)
 		if (BS_DDRC_READ(port, SWSTAT) & 1) {
 			break;
 		} else if (timeout_elapsed(timeout)) {
-			ERROR("%s:%d failed to prepare PHY init\n", __func__, __LINE__);
+			ERROR("%s:%d failed to complete PHY init\n", __func__, __LINE__);
+			err = -1;
 			break;
 		}
 	}
@@ -568,7 +570,8 @@ void ctrl_complete_phy_init(int port, struct ddr_configuration *data)
 		if (BS_DDRC_READ(port, DFISTAT) & 1) {
 			break;
 		} else if (timeout_elapsed(timeout)) {
-			ERROR("%s:%d failed to prepare PHY init (port %d)\n", __func__, __LINE__, port);
+			ERROR("%s:%d failed to complete PHY init (port %d)\n", __func__, __LINE__, port);
+			err = -1;
 			break;
 		}
 	}
@@ -683,6 +686,7 @@ void ctrl_complete_phy_init(int port, struct ddr_configuration *data)
 
 	/* enable ddrc auto-refreshes after trainings (uMCTL2 DataBook p.1567 Table6-8, step 26) */
 	BS_DDRC_WRITE(port, RFSHCTL3, 0x0);
+	return err;
 }
 
 int ddr_init_ecc_memory(int port)

@@ -48,6 +48,9 @@ PLATFORM_CHIP_COUNT		:=	2
 PLATFORM_ADDR_BITS_PER_CHIP	:=	43
 SYSTEM_COUNTERS_RESYNC		:=	no
 endif
+ifneq ($(INTERACTIVE_DDR_CONFIG),)
+$(eval $(call add_define,INTERACTIVE_DDR_CONFIG))
+endif
 else ifeq ($(BAIKAL_TARGET),qemu-s)
 $(eval $(call add_define,BAIKAL_QEMU_S))
 else

@@ -14,6 +14,14 @@
 
 #define DDRLCRU_GPR_OFFS	0x20000
 
+void ddrlcru_reset_on(int port)
+{
+	uint32_t val = ddr_io_lcru_read(port, DDRLCRU_GPR_OFFS + RSTMM);
+
+	val |= 0xd;
+	ddr_io_lcru_write(port, DDRLCRU_GPR_OFFS + RSTMM, val);
+}
+
 void ddrlcru_apb_reset_off(int port)
 {
 	uint32_t val = ddr_io_lcru_read(port, DDRLCRU_GPR_OFFS + RSTMM);
@@ -110,6 +118,9 @@ int ddr_lcpcmd_set_speedbin(int port, int clock_mhz)
 	/* send command to LCP */
 	uint32_t mode;
 	enum cmd_type_t type = CMD_DDRSPEEDBIN_SET;
+
+	/* Assert all resets (this is needed when re-configuring) */
+	ddrlcru_reset_on(port);
 
 	switch (clock_mhz) {
 	case DDRSB_1600:

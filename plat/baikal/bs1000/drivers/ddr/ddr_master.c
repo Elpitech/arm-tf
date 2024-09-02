@@ -257,46 +257,50 @@ int ddr_config_by_spd(int port,
 
 	/* Get Cycle Time (tCK) */
 	data->tCK = SPD_TO_PS(spd->tck_min, spd->fine_tck_min);
-	data->clock_mhz = 1000000 / data->tCK;
+	if (data->clock_mhz == 0) {
+		data->clock_mhz = 1000000 / data->tCK;
 
 #ifdef BAIKAL_DDR_CUSTOM_CLOCK_FREQ
-	if (data->clock_mhz > BAIKAL_DDR_CUSTOM_CLOCK_FREQ) {
-		data->clock_mhz = BAIKAL_DDR_CUSTOM_CLOCK_FREQ;
-		data->tCK = 1000000 / data->clock_mhz;
-	}
+		if (data->clock_mhz > BAIKAL_DDR_CUSTOM_CLOCK_FREQ) {
+			data->clock_mhz = BAIKAL_DDR_CUSTOM_CLOCK_FREQ;
+			data->tCK = 1000000 / data->clock_mhz;
+		}
 #endif
 #ifdef BAIKAL_DDRCFG_IN_FLASH
-	if (ddr_port_config->ddr_sign == BAIKAL_FLASH_USE_STR) {
-		switch (ddr_port_config->speedbin) {
-		case FLASH_SPEEDBIN_3200:
-			data->clock_mhz = 1600;
-			break;
-		case FLASH_SPEEDBIN_2933:
-			data->clock_mhz = 1466;
-			break;
-		case FLASH_SPEEDBIN_2666:
-			data->clock_mhz = 1333;
-			break;
-		case FLASH_SPEEDBIN_2400:
-			data->clock_mhz = 1200;
-			break;
-		case FLASH_SPEEDBIN_2133:
-			data->clock_mhz = 1066;
-			break;
-		case FLASH_SPEEDBIN_1866:
-			data->clock_mhz = 933;
-			break;
-		case FLASH_SPEEDBIN_1600:
-			data->clock_mhz = 800;
-			break;
-		default:
-			ERROR("Wrong DDR frequncy setting from flash\n");
-			break;
-		}
+		if (ddr_port_config->ddr_sign == BAIKAL_FLASH_USE_STR) {
+			switch (ddr_port_config->speedbin) {
+			case FLASH_SPEEDBIN_3200:
+				data->clock_mhz = 1600;
+				break;
+			case FLASH_SPEEDBIN_2933:
+				data->clock_mhz = 1466;
+				break;
+			case FLASH_SPEEDBIN_2666:
+				data->clock_mhz = 1333;
+				break;
+			case FLASH_SPEEDBIN_2400:
+				data->clock_mhz = 1200;
+				break;
+			case FLASH_SPEEDBIN_2133:
+				data->clock_mhz = 1066;
+				break;
+			case FLASH_SPEEDBIN_1866:
+				data->clock_mhz = 933;
+				break;
+			case FLASH_SPEEDBIN_1600:
+				data->clock_mhz = 800;
+				break;
+			default:
+				ERROR("Wrong DDR frequncy setting from flash\n");
+				break;
+			}
 
+			data->tCK = 1000000 / data->clock_mhz;
+		}
+#endif
+	} else {
 		data->tCK = 1000000 / data->clock_mhz;
 	}
-#endif
 
 	if (data->dimms == 2) {
 		data->timing_2t = 1;

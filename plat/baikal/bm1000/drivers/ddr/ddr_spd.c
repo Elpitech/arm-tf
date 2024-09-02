@@ -76,6 +76,7 @@ void *ddr_read_spd(const unsigned int dimm_idx)
 	BAIKAL_SPD_TXRX(SPD_SPA0, &startaddr, sizeof(startaddr), NULL, 0);
 
 	if (rxsize != SPD_FULL_SIZE) {
+		*(int *)p = 0; // invalidate memory type
 		return NULL;
 	}
 #else /* defined(BAIKAL_DIMM_SPD_STATIC) */
@@ -84,6 +85,7 @@ void *ddr_read_spd(const unsigned int dimm_idx)
 	if (crc16(p +   0, 126, 0) != ((p[127] << 8) | p[126]) ||
 	    crc16(p + 128, 126, 0) != ((p[255] << 8) | p[254])) {
 		ERROR("DIMM%u: SPD CRC checksum fail\n", dimm_idx);
+		*(int *)p = 0; // invalidate memory type
 		return NULL;
 	}
 #ifdef BAIKAL_DUAL_CHANNEL_MODE

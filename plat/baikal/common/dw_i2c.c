@@ -143,14 +143,16 @@ int i2c_txrx(const uintptr_t base,
 
 				activity_timeout = timeout_init_us(100000);
 				++txedsize;
-			} else if (!(ic_status & IC_STATUS_MST_ACTIVITY) &&
-					timeout_elapsed(activity_timeout)) {
-				err = -1;
-				break;
 			}
 		} else if ((ic_status & IC_STATUS_TFE) &&
 			  !(ic_status & IC_STATUS_MST_ACTIVITY)) {
 			err = 0;
+			break;
+		}
+
+		if (timeout_elapsed(activity_timeout)) {
+			ERROR("i2c_txrx: Timeout! ic_status %x\n", ic_status);
+			err = -1;
 			break;
 		}
 	}

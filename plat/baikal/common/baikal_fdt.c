@@ -74,3 +74,24 @@ void fdt_memory_node_set(void *fdt,
 		return;
 	}
 }
+
+uint64_t fdt_translation_offset(const void *fdt, int nodeoffset)
+{
+	int parentoffset;
+	uint64_t translation = 0;
+	const fdt64_t *prop;
+	int proplen;
+
+	parentoffset = fdt_parent_offset(fdt, nodeoffset);
+	while (parentoffset > 0) {
+		if ((prop = fdt_getprop(fdt, parentoffset, "ranges", &proplen)) != NULL) {
+			if (proplen >= 16)
+				translation += fdt64_ld(prop + 1) - fdt64_ld(prop);
+		} else {
+			break;
+		}
+		parentoffset = fdt_parent_offset(fdt, parentoffset);
+	}
+
+	return translation;
+}

@@ -11,5 +11,5 @@ bool fdt_node_is_enabled(const void *fdt, int nodeoffset);
 void fdt_memory_node_set(void *fdt,
 			 const uint64_t region_descs[][2],
 			 unsigned int region_num);
-
+uint64_t fdt_translation_offset(const void *fdt, int nodeoffset);
 #endif /* BAIKAL_FDT_H */

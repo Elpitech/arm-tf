@@ -119,6 +119,7 @@ void pcie_init(void)
 		reg  = fdt32_to_cpu(prop[0]);
 		reg <<= 32;
 		reg |= fdt32_to_cpu(prop[1]);
+		reg += fdt_translation_offset(fdt, node);
 
 		chip_idx = PLATFORM_ADDR_CHIP(reg);
 
@@ -138,6 +139,7 @@ void pcie_init(void)
 				break;
 			}
 		}
+if (idx >= ARRAY_SIZE(pcie_dbis)) ERROR("dbi %lx not found\n", reg); //vvv
 	}
 
 	for (chip_idx = 0; chip_idx < PLATFORM_CHIP_COUNT; ++chip_idx) {

@@ -74,6 +74,7 @@ static void dt_enable_mc_node(void *fdt, const uintptr_t base)
 		reg  = fdt32_to_cpu(prop[0]);
 		reg <<= 32;
 		reg |= fdt32_to_cpu(prop[1]);
+		reg += fdt_translation_offset(fdt, node);
 
 		if (reg == base) {
 			int err;

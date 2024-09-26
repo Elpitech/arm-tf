@@ -249,8 +249,10 @@ int ddr_config_by_spd(int port,
 	memcpy(((uint8_t *)data->DQ_map + 16), spd->mapping + 8, 2);
 	data->DQ_swap_rank = ((spd->mapping[0] >> 6) & 0x3) == 0 ? 1 : 0;
 
+#ifndef DDR_ECC_OFF
 	/* The DIMM has ECC capability when the extension bus exist */
 	data->ecc_on = (spd->bus_width >> 3) & 0x1;
+#endif
 	if ((spd->bus_width & 0x7) == 0x2) {
 		data->dbus_half = 1;
 	}

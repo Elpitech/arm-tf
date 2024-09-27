@@ -12,14 +12,14 @@ enum smbus_sht {
 	SMBUS_SHT_100KHZ = 1
 };
 
-unsigned int smbus_txrx(uintptr_t base,
-			unsigned int iclk,
-			enum smbus_sht sht,
-			unsigned int sclclk,
-			unsigned int targetaddr,
-			const void *txbuf,
-			unsigned int txbufsize,
-			void *rxbuf,
-			unsigned int rxbufsize);
+int smbus_txrx(uintptr_t base,
+	       unsigned int iclk,
+	       enum smbus_sht sht,
+	       unsigned int sclclk,
+	       unsigned int targetaddr,
+	       const void *txbuf,
+	       unsigned int txbufsize,
+	       void *rxbuf,
+	       unsigned int rxbufsize);
 
 #endif /* BM1000_SMBUS_H */

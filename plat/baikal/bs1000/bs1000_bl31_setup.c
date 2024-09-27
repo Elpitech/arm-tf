@@ -424,6 +424,16 @@ void bl31_platform_setup(void)
 	bs1000_smmu_s_init();
 	bs1000_usb_init();
 
+#ifdef BAIKAL_MUX_INIT
+	sc_lcru_clrsetbits(SC_GPR_LSP_CTL,
+			   SC_GPR_LSP_CTL_SEL_PERIPH_MASK,
+			   BAIKAL_MUX_INIT << SC_GPR_LSP_CTL_SEL_PERIPH_SHIFT);
+#if PLATFORM_CHIP_COUNT > 1
+	sc_lcru_clrsetbits(PLATFORM_ADDR_OUT_CHIP(1, SC_GPR_LSP_CTL),
+			   SC_GPR_LSP_CTL_SEL_PERIPH_MASK,
+			   BAIKAL_MUX_INIT << SC_GPR_LSP_CTL_SEL_PERIPH_SHIFT);
+#endif
+#endif
 	baikal_fdt_memory_update();
 #if PLATFORM_CHIP_COUNT == 1
 	/* Skipped in multichip config due to SPI interrupts limit */

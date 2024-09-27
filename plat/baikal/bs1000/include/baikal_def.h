@@ -55,4 +55,8 @@
 #define BAIKAL_SYNC_TIMER_IRQ		90
 #endif
 
+#if defined(ELPITECH)
+# define BAIKAL_MUX_INIT		0x1
+#endif
+
 #endif /* BAIKAL_DEF_H */

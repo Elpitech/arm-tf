@@ -444,6 +444,8 @@ int dram_init(void)
 			interactive_ddr_config &= 0x3f;
 		}
 	}
+#else
+	udelay(100000);
 #endif
 
 	for (chip_idx = 0, slot_idx = 0; chip_idx < PLATFORM_CHIP_COUNT; ++chip_idx) {
